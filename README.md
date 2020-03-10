@@ -2,7 +2,7 @@
 
 Run SPIR-V shaders in WebAssembly
 
-See demo at https://fhtr.org/spirv-wasm
+See demo at https://fhtr.org/spirv-wasm - uses WebAssembly Threads and compiled with SIMD, so you may want to edit chrome:flags to enable those.
 
 
 ## Build
