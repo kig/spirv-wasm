@@ -7,7 +7,7 @@ See demo at https://fhtr.org/spirv-wasm
 
 ## Build
 
-Requires Emscripten, glslangValidator and spirv-cross.
+Requires Emscripten, glslangValidator, glm and spirv-cross.
 
 [Install Emscripten](https://emscripten.org/docs/getting_started/downloads.html)
 
@@ -16,6 +16,7 @@ The others are likely in your package manager.
 ```bash
 brew install glslangValidator
 brew install spirv-cross
+brew install glm
 ```
 
 Now you can build the shader:
