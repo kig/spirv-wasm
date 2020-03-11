@@ -23,8 +23,9 @@ const onready = () => {
     if (workerCount === readyCount) init();
 }
 
-const workerCount = 32;
+const workerCount = navigator.hardwareConcurrency;
 const workers = new Array(workerCount).fill().map(x => makeWorker(onready));
+
 
 async function init() {
     let width, segHeight, height, bufs, id, resized;
@@ -38,9 +39,10 @@ async function init() {
 	const width = window.innerWidth;
 	const proposedHeight = innerHeight;
     
-	segHeight = Math.ceil(proposedHeight/workerCount);
-	const height = workerCount * segHeight;
-	bufs = workers.map(x => new ArrayBuffer(width*segHeight*4));
+	segHeight = 40;
+        segCount = Math.ceil(proposedHeight / segHeight);
+	const height = segCount * segHeight;
+	bufs = new Array(segCount).fill().map(x => new ArrayBuffer(width*segHeight*4));
 	canvas.width = width;
 	canvas.height = height;
 	id = ctx.createImageData(width, height);
@@ -62,21 +64,20 @@ async function init() {
 	const x1 = (X1*aspect + Math.sin(t)/z/1.5) * z
 	const y0 = (Y0 + Math.cos(t*Math.sqrt(2))/z/1.5) * z
 	const y1 = (Y1 + Math.cos(t*Math.sqrt(2))/z/1.5) * z
-	for (let y = 0; y < canvas.height; y += segHeight*workers.length) {
+	for (let y = 0, i = 0, w = 0; y < canvas.height; y += segHeight, i++, w++) {
 	    if (resized) break;
-	    for (let w = 0; w < workers.length; w++) {
-		const f0 = (y+w*segHeight)/canvas.height;
-		const f1 = (y+(w+1)*segHeight)/canvas.height;
-		const ry0 = y0 * (1-f0) + y1 * f0;
-		const ry1 = y0 * (1-f1) + y1 * f1;
-		segments[w] = workers[w].call({x0, y0: ry0, x1, y1: ry1, width: canvas.width, height: segHeight, maxIterations, buf: bufs[w]}, [bufs[w]]);
-	    }
-	    for (let i = 0; i < segments.length; i++) {
-		const buf = await segments[i];
-		if (resized) break;
-		id.data.set(new Uint8Array(buf), (y + i*segHeight) * canvas.width * 4);
-		bufs[i] = buf;
-	    }
+	    const f0 = y/canvas.height;
+	    const f1 = (y+segHeight)/canvas.height;
+	    const ry0 = y0 * (1-f0) + y1 * f0;
+	    const ry1 = y0 * (1-f1) + y1 * f1;
+	    if (w === workers.length) w = 0;
+	    segments[i] = workers[w].call({x0, y0: ry0, x1, y1: ry1, width: canvas.width, height: segHeight, maxIterations, buf: bufs[i]}, [bufs[i]]);
+	}
+	for (let i = 0; i < segments.length; i++) {
+	    const buf = await segments[i];
+	    if (resized) break;
+	    id.data.set(new Uint8Array(buf), i * segHeight * canvas.width * 4);
+	    bufs[i] = buf;
 	}
 	if (!resized) ctx.putImageData(id, 0, 0);
 	requestAnimationFrame(tick);
