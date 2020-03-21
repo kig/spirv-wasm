@@ -1,0 +1,11 @@
+#!/usr/bin/env ruby
+
+STDIN.read.sub(
+	/program_ispc_main\(.*uniform struct outputs&\s+([^,]+),\s*uniform struct inputs&\s+([^\)]+)/
+) {|m| 
+	"program_ispc_main(uniform struct inputs& #{$2}, uniform struct outputs\& #{$1}" 
+}.sub(
+	/program_ispc_main\(.*uniform struct inputs/
+) {|m| 
+	"program_ispc_main(uniform int3 gl_NumWorkGroups, uniform int3 gl_WorkGroupID, varying int3 gl_LocalInvocationID, varying int3 gl_GlobalInvocationID, varying int gl_LocalInvocationIndex, uniform struct inputs" 
+}.split(/^export void /)[0].display

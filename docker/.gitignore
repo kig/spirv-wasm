@@ -1,0 +1,4 @@
+*.o
+*.wasm
+*.js
+*.html
