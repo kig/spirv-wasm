@@ -75,6 +75,7 @@ bool readInput()
     return input_length > 0;
 }
 
+EMSCRIPTEN_KEEPALIVE extern "C" 
 int run(int w, int h, int d, ispc::inputs *inputs, ispc::outputs *outputs) {
   workSize[0] = w;
   workSize[1] = h;
@@ -85,6 +86,8 @@ int run(int w, int h, int d, ispc::inputs *inputs, ispc::outputs *outputs) {
 
 int main(int argc, char *argv[])
 {
+    return 0;
+
     EM_ASM({
       console.time('compute');
     });
@@ -105,7 +108,7 @@ int main(int argc, char *argv[])
     ispc::outputs *outputs = (ispc::outputs *)malloc(sizeof(ispc::outputs) - 4 + bufferSize);
     ispc::inputs *inputs = (ispc::inputs *)input;
 
-    int output_ptr = run(dims[0]/192, dims[1], 1, inputs, outputs);
+    int output_ptr = run(dims[0]/192, dims[1]/10, 1, inputs, outputs);
 
     EM_ASM({
 	console.timeEnd('compute');

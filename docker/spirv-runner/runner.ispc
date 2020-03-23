@@ -1,9 +1,9 @@
 #include "program.ispc"
 
-task
-void runner_tiled(uniform int3 gl_NumWorkGroups, uniform struct inputs& input, uniform struct outputs& output)
+export void runner_workgroup(uniform int numWorkGroups[3], uniform int workGroupID[3], uniform struct inputs& input, uniform struct outputs& output)
 {
-    uniform int3 gl_WorkGroupID = int3(taskIndex0, taskIndex1, taskIndex2);
+    uniform int3 gl_NumWorkGroups = int3(numWorkGroups[0], numWorkGroups[1], numWorkGroups[2]);
+    uniform int3 gl_WorkGroupID = int3(workGroupID[0], workGroupID[1], workGroupID[2]);
 
     // Vectorise the workgroup
     foreach(lz = 0 ... gl_WorkGroupSize.z, ly = 0 ... gl_WorkGroupSize.y, lx = 0 ... gl_WorkGroupSize.x)
@@ -16,10 +16,21 @@ void runner_tiled(uniform int3 gl_NumWorkGroups, uniform struct inputs& input, u
     }
 }
 
+task
+void runner_task(uniform int work_groups[3], uniform struct inputs& input, uniform struct outputs& output)
+{
+    uniform int workGroupID[3];
+    workGroupID[0] = taskIndex0;
+    workGroupID[1] = taskIndex1;
+    workGroupID[2] = taskIndex2;
+    runner_workgroup(work_groups, workGroupID, input, output);
+}
+
 export void runner_main(uniform int work_groups[3], uniform struct inputs& input, uniform struct outputs& output)
 {
-    uniform int3 gl_NumWorkGroups = int3(work_groups[0], work_groups[1], work_groups[2]);
-
     launch[work_groups[0], work_groups[1], work_groups[2]]
-    runner_tiled(gl_NumWorkGroups, input, output);
+    runner_task(work_groups, input, output);
 }
+
+export static int stdout = 1;
+export static int stderr = 2;

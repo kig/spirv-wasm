@@ -1,6 +1,6 @@
 #version 450
 
-layout(local_size_x = 192, local_size_y = 1, local_size_z = 1) in;
+layout(local_size_x = 192, local_size_y = 10, local_size_z = 1) in;
 
 layout(std430, binding = 0) readonly buffer inputs
 {
@@ -70,7 +70,7 @@ layout(std430, binding = 1) buffer outputs
 //   1.0 - divide fps by 16
 //   0.5 - divide fps by 64
 //
-#define BENCHMARK_SUBSAMPLES 4.0
+#define BENCHMARK_SUBSAMPLES 1.0
 
 // Control demo mode supersampling (SUBSAMPLES * SUBSAMPLES primary rays per pixel)
 #define SUBSAMPLES 2.0
