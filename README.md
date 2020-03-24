@@ -4,6 +4,9 @@ Run SPIR-V shaders in WebAssembly
 
 See demo at https://fhtr.org/spirv-wasm - uses WebAssembly Threads, so you may need to turn them on in chrome://flags or such.
 
+## Project goal
+
+Write code in one language, run safely in the browser at 50% of hardware peak performance. (FWIW naive C++ achieves 1% of HW peak performance on a 16-core. If you include the GPU, it's closer to 0.1% of peak perf. Divide by amount of compute nodes available to you.)
 
 ## Build
 
