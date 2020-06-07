@@ -22,10 +22,15 @@ const obj = await WebAssembly.instantiateStreaming(fetch('mandelbrot.ispc.wasm')
     "ISPCSync":() => console.log("ISPCSync"), 
 }});
 const width = 1920, height = 1080, outputPtr = 0;
-obj.instance.exports.memory.grow(Math.ceil(width * height * 4 / 2**16)); // Allocate space for output image
-instance.exports.mandelbrot_ispc(-2.5, -1, 1, 1, width, height, 255, outputPtr); // Call the ISPC function
 
-const heap = new Int32Array(obj.instance.exports.memory.buffer); // Read in the output image off the heap.
+// Allocate space for output image
+obj.instance.exports.memory.grow(Math.ceil(width * height * 4 / 2**16));
+
+// Call the ISPC function
+instance.exports.mandelbrot_ispc(-2.5, -1, 1, 1, width, height, 255, outputPtr);
+
+// Read the output image from the heap.
+const heap = new Int32Array(obj.instance.exports.memory.buffer); 
 
 const canvas = document.createElement('canvas');
 canvas.width = width;
