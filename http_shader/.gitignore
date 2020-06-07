@@ -1,0 +1,8 @@
+*.comp
+*.spv
+*.swp
+*.o
+vulkanRunner
+httpd_i
+httpd
+httpd_ivec4
