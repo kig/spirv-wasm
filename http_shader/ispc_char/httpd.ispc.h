@@ -70,7 +70,7 @@ struct responseBuffer {
 extern "C" {
 #endif // __cplusplus
     extern void httpd_get_workgroup_size(int32_t &wg_x, int32_t &wg_y, int32_t &wg_z);
-    extern void runner_main(int32_t * work_groups, struct inputBuffer &v_94, struct outputBuffer &v_656, struct heapBuffer &_901, struct requestBuffer &reqBuf, struct responseBuffer &resBuf);
+    extern void runner_main(int32_t * work_groups, struct inputBuffer &v_94, struct outputBuffer &v_656, struct heapBuffer &_901);
 #if defined(__cplusplus) && (! defined(__ISPC_NO_EXTERN_C) || !__ISPC_NO_EXTERN_C )
 } /* end extern C */
 #endif // __cplusplus

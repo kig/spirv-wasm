@@ -6,12 +6,14 @@ version 450
 
 #define BLK_SZ 1024
 
+#define REQUESTS_PER_INVOCATION 512
+
 #define strCopy(SRC, DST, i, start, end) uint _s = start; uint _e = end; while (_s < _e) (DST)[i++] = (SRC)[_s++];
 #define strCopyAll(SRC, DST, i) uint _str[] = SRC; strCopy(_str, DST, i, 0, _str.length())
 
 #define A_OK if (i > BLK_SZ) { error(index); return; }
 
-layout (local_size_x = 1, local_size_y = 1, local_size_z = 1 ) in;
+layout (local_size_x = 16, local_size_y = 1, local_size_z = 1 ) in;
 
 layout(std430, binding = 0) readonly buffer inputBuffer { lowp uint inputBytes[]; };
 layout(std430, binding = 1) buffer outputBuffer { lowp uint outputBytes[]; };
@@ -190,6 +192,8 @@ void handleRequest(uint index) {
 }
 
 void main() {
-	uint index = BLK_SZ * (gl_GlobalInvocationID.x + gl_GlobalInvocationID.y * (gl_NumWorkGroups.x * gl_WorkGroupSize.x));
-	handleRequest(index);
+	uint index = BLK_SZ * REQUESTS_PER_INVOCATION * (gl_GlobalInvocationID.x + gl_GlobalInvocationID.y * (gl_NumWorkGroups.x * gl_WorkGroupSize.x));
+	for (uint i = 0; i < REQUESTS_PER_INVOCATION; i++) {
+		handleRequest(index + BLK_SZ);
+	}
 }

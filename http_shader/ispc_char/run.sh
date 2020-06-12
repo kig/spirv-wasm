@@ -1,0 +1,1 @@
+time ./httpd < request.txt
