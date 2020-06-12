@@ -1,5 +1,8 @@
 const varying int int_cast(const varying unsigned int32 v) { return (int32)v; }
 
+#define atomicAdd(val, data) atomic_add_global(&(val), (data))
+#define atomicCompSwap(val, compare, newval) atomic_compare_exchange_global(&(val), (compare), (newval))
+
 #include "httpd.ispc"
 
 export void runner_dispatch(uniform int work_group_ID[3], uniform int work_groups[3], 

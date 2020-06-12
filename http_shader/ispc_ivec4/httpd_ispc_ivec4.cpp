@@ -19,6 +19,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <chrono>
 
 #ifndef GLM_FORCE_SWIZZLE
 #define GLM_FORCE_SWIZZLE
@@ -53,6 +54,10 @@ int main()
 		} else {
 			snprintf((char*)(&inputBuffe[(requestSize / 4) * i + 4]), ((requestSize / 16) - 1) * 16, "GET /%07d HTTP/1.1\r\nhost: localhost\r\n\r\n", i);
 		}
+		if (i % 11 == 10) {
+			int j = i % 10;
+			snprintf((char*)(&inputBuffe[(requestSize / 4) * i + 4]), ((requestSize / 16) - 1) * 16, "POST /%07d HTTP/1.1\r\nhost: localhost\r\n\r\ntext/html\r\n\r\n<html><body>This is %d spam-post %d number %d.</body></html>", j, i, i, i);
+		}
 		inputBuffe[(requestSize / 4) * i] = strlen((char*)(&inputBuffe[(requestSize / 4) * i + 4]));
 		// if (i < 10) printf("%d\n%s\n", inputBuffe[(requestSize / 4) * i], (char*)(&inputBuffe[(requestSize / 4) * i + 4]));
 
@@ -60,6 +65,8 @@ int main()
 		heapBuffe[(requestSize / 4) * i] = strlen((char*)(&heapBuffe[(requestSize / 4) * i + 4]));
 		// if (i < 10) printf("%d\n%s\n", heapBuffe[(requestSize / 4) * i], (char*)(&heapBuffe[(requestSize / 4) * i + 4]));
 	}
+
+	std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
 	for (int j = 0; j < 1000; j++) {
 		int32_t workgroups[] = {NUM_WORKGROUPS_X, NUM_WORKGROUPS_Y, 1};
 		runner_main(workgroups,
@@ -68,10 +75,16 @@ int main()
 			*(struct heapBuffer*)heapBuffe
 		);
 	}
+	std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
+
 	for (int i = 0; i < 10; i++) {
 		write(1, ((char*)outputBuffe)+requestSize*i+16, outputBuffe[(requestSize / 4)*i]);
 		printf("\n");
 	}
+
+	printf("\nElapsed: %ld ms\n", std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count());
+	printf("Million requests per second: %.3f\n\n", 1e-6 * (requestCount * 1000.0) / (0.001 * std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count()));
+
 
 	return 0;
 }
