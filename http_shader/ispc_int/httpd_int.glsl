@@ -13,7 +13,7 @@ version 450
 #define strCopy(SRC, DST, i, index) {int _str[] = SRC; strCopySlice(_str, DST, i, index, 0, _str.length())}
 #define W(chr) response[index + i*STRIDE] = (chr); i++;
 
-#define A_OK if (i > BSZ) { error(index); return; }
+#define A_OK if (i > BSZ) { return error(index); }
 
 layout ( local_size_x = STRIDE, local_size_y = 1, local_size_z = 1 ) in;
 
@@ -158,18 +158,18 @@ void writeBody(inout int i, int index, ivec2 path, header headers[32], int heade
 	}
 }
 
-void error(int index) {
+int error(int index) {
 	int i = 0;
 	writeStatus(i, index, 500);
 	writeContentType(i, index, MIME_TEXT_PLAIN);
 	writeCRLF(i, index);
-	response[index + (BSZ-1)*STRIDE] = i;
+	return i;
 }
 
 void unpackRequest(int byteIndex, int index) {
-	int len = inputBytes[byteIndex + 255];
-	for (int j = 0; j < len/4+1; j++) {
-		int v = inputBytes[byteIndex + j];
+	int len = inputBytes[byteIndex];
+	for (int j = 0; j < min(256, len/4+1); j++) {
+		int v = inputBytes[byteIndex + j + 1];
 		int off = index + (j * 4) * STRIDE;
 		request[off + 0*STRIDE] = (v >> 0) & 0xFF;
 		request[off + 1*STRIDE] = (v >> 8) & 0xFF;
@@ -178,11 +178,10 @@ void unpackRequest(int byteIndex, int index) {
 	}
 }
 
-void packResponse(int byteIndex, int index) {
-	int len = response[index + (BSZ-1)*STRIDE];
-	outputBytes[byteIndex + 255] = len;
-	for (int j = 0; j < len+1; j++) {
-		int off = index + (j * 4) * STRIDE;
+void packResponse(int byteIndex, int index, int len) {
+	outputBytes[byteIndex] = len;
+	for (int j = 1; j < min(256, len/4+1); j++) {
+		int off = index + (j * 4 - 4) * STRIDE;
 		ivec4 v = ivec4(
 			((response[off + 0*STRIDE] & 0xFF) << 0),
 		    ((response[off + 1*STRIDE] & 0xFF) << 8),
@@ -193,7 +192,7 @@ void packResponse(int byteIndex, int index) {
 	}
 }
 
-void handleRequest(int index) {
+int handleRequest(int index) {
 	int method;
 	ivec2 path;
 	int protocol;
@@ -217,8 +216,7 @@ void handleRequest(int index) {
 	writeContentType(i, index, MIME_TEXT_PLAIN);
 	writeCRLF(i, index);
 	writeBody(i, index, path, headers, headerCount);
-	response[index + (BSZ-1)*STRIDE] = i;
-
+	return i;
 }
 
 void main() {
@@ -226,6 +224,6 @@ void main() {
 	int index = STRIDE * BSZ * (wgId / STRIDE);
 	index += wgId & (STRIDE-1);
 	unpackRequest(wgId*(BSZ/4), index);
-	handleRequest(index);
-	packResponse(wgId*(BSZ/4), index);
+	int len = handleRequest(index);
+	packResponse(wgId*(BSZ/4), index, len);
 }

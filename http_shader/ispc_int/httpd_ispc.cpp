@@ -19,6 +19,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <chrono>
 
 #ifndef GLM_FORCE_SWIZZLE
 #define GLM_FORCE_SWIZZLE
@@ -46,11 +47,13 @@ static int responseBuffe[1024 * requestCount] = {};
 
 int main()
 {
-	int bytes = fread(((char*)inputBuffe), 1, 1020, stdin);
-	inputBuffe[255] = bytes;
+	int bytes = fread(((char*)inputBuffe)+4, 1, 1020, stdin);
+	inputBuffe[0] = bytes;
 	for (int i = 1; i < requestCount; i++) {
-		memcpy((void*)(inputBuffe + 256 * i), (void*)inputBuffe, bytes+16);
+		memcpy((void*)(inputBuffe + 256 * i), (void*)inputBuffe, 1024);
 	}
+
+	std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
 	for (int j = 0; j < 1000; j++) {
 		int32_t workgroups[] = {NUM_WORKGROUPS_X, NUM_WORKGROUPS_Y, 1};
 		runner_main(workgroups,
@@ -61,10 +64,16 @@ int main()
 			*(struct responseBuffer*)responseBuffe
 		);
 	}
+	std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
+
 	for (int i = 0; i < 1; i++) {
-		printf("%d\n", outputBuffe[256*i+255]);
-		write(1, ((char*)outputBuffe)+1024*i, outputBuffe[256*i+255]);
+		printf("%d\n", outputBuffe[256*i]);
+		write(1, ((char*)outputBuffe)+1024*i+4, outputBuffe[256*i]);
 	}
+
+	printf("Elapsed: %ld ms\n", std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count());
+	printf("Million requests per second: %.3f\n", 1e-6 * (requestCount * 1000.0) / (0.001 * std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count()));
+
 
 	return 0;
 }
