@@ -19,6 +19,16 @@
 #include "spirv_cross/external_interface.h"
 #include <stdio.h>
 #include <string.h>
+#include <chrono>
+
+inline int _atomicCompSwap(int *ptr, int val, int newval) {
+	__atomic_compare_exchange(ptr, &val, &newval, false, 0, 0);
+	return val;
+}
+
+#define atomicCompSwap(ptr, val, newval) _atomicCompSwap(&(ptr), (val), (newval))
+
+#include "httpd.cpp"
 
 #ifndef GLM_FORCE_SWIZZLE
 #define GLM_FORCE_SWIZZLE
@@ -64,6 +74,10 @@ int main()
 		} else {
 			snprintf((char*)(&inputBuffer[(requestSize / 4) * i + 4]), ((requestSize / 16) - 1) * 16, "GET /%07d HTTP/1.1\r\nhost: localhost\r\n\r\n", i);
 		}
+		if (i % 11 == 10) {
+			int j = i % 10;
+			snprintf((char*)(&inputBuffer[(requestSize / 4) * i + 4]), ((requestSize / 16) - 1) * 16, "POST /%07d HTTP/1.1\r\nhost: localhost\r\n\r\ntext/html\r\n\r\n<html><body>This is %d spam-post %d number %d.</body></html>", j, i, i, i);
+		}
 		inputBuffer[(requestSize / 4) * i] = strlen((char*)(&inputBuffer[(requestSize / 4) * i + 4]));
 		// if (i < 10) printf("%d\n%s\n", inputBuffer[(requestSize / 4) * i], (char*)(&inputBuffer[(requestSize / 4) * i + 4]));
 
@@ -72,7 +86,8 @@ int main()
 		// if (i < 10) printf("%d\n%s\n", heapBuffer[(requestSize / 4) * i], (char*)(&heapBuffer[(requestSize / 4) * i + 4]));
 	}
 
-	for (int i = 0; i < 1000; i++) {
+	std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
+	for (int i = 0; i < 100; i++) {
 
 		// Bind resources to the shader.
 		// For resources like samplers and buffers, we provide a list of pointers,
@@ -101,6 +116,7 @@ int main()
 		}
 
 	}
+	std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
 
 	// Call destructor.
 	iface->destruct(shader);
@@ -109,6 +125,9 @@ int main()
 		write(1, ((char*)outputBuffer)+requestSize*i+16, outputBuffer[(requestSize / 4)*i]);
 		printf("\n");
 	}
+
+	printf("\nElapsed: %ld ms\n", std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count());
+	printf("Million requests per second: %.3f\n\n", 1e-6 * (requestCount * 100.0) / (0.001 * std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count()));
 
 	return 0;
 }
