@@ -7,6 +7,7 @@
 #include <cmath>
 #include <stdio.h>
 #include <stdlib.h>
+#include <chrono>
 
 #ifdef WIN32
 #include <io.h>
@@ -134,12 +135,16 @@ class ComputeApplication
             } else {
                 snprintf((char*)(&input[(maxRequestSize) * i + 16]), ((maxRequestSize / 16) - 1) * 16, "GET /%07d HTTP/1.1\r\nhost: localhost\r\n\r\n", i);
             }
+            if (i % 11 == 10) {
+                int j = i % 10;
+                snprintf((char*)(&input[(maxRequestSize) * i + 16]), ((maxRequestSize / 16) - 1) * 16, "POST /%07d HTTP/1.1\r\nhost: localhost\r\n\r\ntext/html\r\n\r\n<html><body>This is %d spam-post %d number %d.</body></html>", j, i, i, i);
+            }
             ((int32_t*)input)[(maxRequestSize / 4) * i] = strlen(input + maxRequestSize * i + 16);
-            if (i < 10) printf("%d\n%s\n", input[(maxRequestSize) * i], (char*)(&input[(maxRequestSize) * i + 16]));
+            // if (i < 10) printf("%d\n%s\n", input[(maxRequestSize) * i], (char*)(&input[(maxRequestSize) * i + 16]));
 
             snprintf((char*)(&heap[(maxRequestSize) * i + 16]), ((maxRequestSize) - 1) * 16, "text/html\r\n\r\n<html><body>This is document number %d.</body></html>", i);
             ((int32_t*)heap)[(maxRequestSize / 4) * i] = strlen(heap + maxRequestSize * i + 16);
-             if (i < 10) printf("%d\n%s\n", heap[(maxRequestSize) * i], (char*)(&heap[(maxRequestSize) * i + 16]));
+            // if (i < 10) printf("%d\n%s\n", heap[(maxRequestSize) * i], (char*)(&heap[(maxRequestSize) * i + 16]));
         }
 
         // Initialize vulkan:
@@ -164,13 +169,19 @@ class ComputeApplication
         writeHeap();
 
             writeInput();
-        for (int i = 0; i < 1000; i++) {
+        std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
+        for (int i = 0; i < 100; i++) {
             startCommandBuffer();
             waitCommandBuffer();
             //swapOutputBuffers();
         }
+        std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
             readOutput();
             writeOutput();
+
+
+        printf("\nElapsed: %ld ms\n", std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count());
+        printf("Million requests per second: %.3f\n\n", 1e-6 * (requestCount * 100.0) / (0.001 * std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count()));
 
         unmapMemory();
         cleanup();
@@ -256,11 +267,12 @@ class ComputeApplication
 
     void writeOutput()
     {
-    	for (int i = 0; i < 10; i++) {
-    		char *responsePtr = (char*)mappedOutputMemory + i * maxResponseSize;
-    		uint32_t responseByteLength = *(uint32_t*)responsePtr;
-	        fwrite(responsePtr + 16, responseByteLength, 1, stdout);
-    	}
+        for (int i = 0; i < 10; i++) {
+            char *responsePtr = (char*)mappedOutputMemory + i * maxResponseSize;
+            uint32_t responseByteLength = *(uint32_t*)responsePtr;
+            fwrite(responsePtr + 16, responseByteLength, 1, stdout);
+            printf("\n");
+        }
         fflush(stdout);
         // vkUnmapMemory(device, bufferMemory);
     }
