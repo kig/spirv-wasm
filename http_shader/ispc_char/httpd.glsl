@@ -4,19 +4,18 @@ version 450
 
 #include "../chr.glsl"
 
+#define BLK_SZ 1024
+
 #define strCopy(SRC, DST, i, start, end) uint _s = start; uint _e = end; while (_s < _e) (DST)[i++] = (SRC)[_s++];
 #define strCopyAll(SRC, DST, i) uint _str[] = SRC; strCopy(_str, DST, i, 0, _str.length())
 
-#define A_OK if (i > 1024) { error(index); return; }
+#define A_OK if (i > BLK_SZ) { error(index); return; }
 
 layout (local_size_x = 1, local_size_y = 1, local_size_z = 1 ) in;
 
-layout(std430, binding = 0) readonly buffer inputBuffer { uint inputBytes[]; };
-layout(std430, binding = 1) buffer outputBuffer { uint outputBytes[]; };
-layout(std430, binding = 2) buffer heapBuffer { uint heap[]; };
-layout(std430, binding = 3) buffer requestBuffer { uint request[]; };
-layout(std430, binding = 4) buffer responseBuffer { uint response[]; };
-
+layout(std430, binding = 0) readonly buffer inputBuffer { lowp uint inputBytes[]; };
+layout(std430, binding = 1) buffer outputBuffer { lowp uint outputBytes[]; };
+layout(std430, binding = 2) buffer heapBuffer { lowp uint heap[]; };
 
 const uint METHOD_UNKNOWN = 0;
 const uint METHOD_GET = 1;
@@ -37,7 +36,7 @@ struct header {
 
 void readRequestUntilChar(inout uint i, uint index, uint endChar, out uvec2 str) {
 	str.x = index + i;
-	while (i < 1024 && request[index+i] != endChar) {
+	while (i < BLK_SZ && inputBytes[index+i] != endChar) {
 		i++;
 	}
 	str.y = index + i;
@@ -46,33 +45,33 @@ void readRequestUntilChar(inout uint i, uint index, uint endChar, out uvec2 str)
 
 void readMethod(inout uint i, uint index, out uint method) {
 	uint j = index + i;
-	uint c = request[j];
+	uint c = inputBytes[j];
 	if (
-		request[j] == CHR_G &&
-		request[j+1] == CHR_E &&
-		request[j+2] == CHR_T &&
-		request[j+3] == CHR_SPACE
+		inputBytes[j] == CHR_G &&
+		inputBytes[j+1] == CHR_E &&
+		inputBytes[j+2] == CHR_T &&
+		inputBytes[j+3] == CHR_SPACE
 	) {
 		method = METHOD_GET;
 		i += 4;
 		return;
 	} else if (
-		request[j] == CHR_P &&
-		request[j+1] == CHR_O &&
-		request[j+2] == CHR_S &&
-		request[j+3] == CHR_T &&
-		request[j+4] == CHR_SPACE
+		inputBytes[j] == CHR_P &&
+		inputBytes[j+1] == CHR_O &&
+		inputBytes[j+2] == CHR_S &&
+		inputBytes[j+3] == CHR_T &&
+		inputBytes[j+4] == CHR_SPACE
 	) {
 		method = METHOD_POST;
 		i += 5;
 		return;
-	} else if (request[j] == CHR_O && request[j+6] == CHR_SPACE) {
+	} else if (inputBytes[j] == CHR_O && inputBytes[j+6] == CHR_SPACE) {
 		method = METHOD_OPTION;
 		i += 7;
 		return;
 	}
 	method = METHOD_UNKNOWN;
-	i = 1025;
+	i = BLK_SZ+1;
 }
 
 void readPath(inout uint i, uint index, out uvec2 path) {
@@ -82,26 +81,26 @@ void readPath(inout uint i, uint index, out uvec2 path) {
 void readProtocol(inout uint i, uint index, out uint protocol) {
 	uvec2 protocolString;
 	readRequestUntilChar(i, index, CHR_CR, protocolString);
-	if (i < 1024 && request[index+i] == CHR_LF) {
+	if (i < 1024 && inputBytes[index+i] == CHR_LF) {
 		i++;
-		if (request[protocolString.y-1] == CHR_1) {
+		if (inputBytes[protocolString.y-1] == CHR_1) {
 			protocol = PROTOCOL_HTTP11;
 		} else {
 			protocol = PROTOCOL_HTTP10;
 		}
 	} else {
 		protocol = PROTOCOL_UNKNOWN;
-		i = 1025;
+		i = BLK_SZ+1;
 	}
 }
 
 bool readHeader(inout uint i, uint index, out header hdr) {
-	if (request[index+i] == CHR_CR) {
+	if (inputBytes[index+i] == CHR_CR) {
 		i += 2;
 		return true;
 	}
 	readRequestUntilChar(i, index, CHR_COLON, hdr.name);
-	while (i < 1024 && request[index+i] == CHR_SPACE) i++;
+	while (i < 1024 && inputBytes[index+i] == CHR_SPACE) i++;
 	readRequestUntilChar(i, index, CHR_CR, hdr.value);
 	i++;
 	return false;
@@ -109,14 +108,14 @@ bool readHeader(inout uint i, uint index, out header hdr) {
 
 void writeStatus(inout uint i, uint index, uint statusCode) {
 	uint j = i + index;
-	strCopyAll("HTTP/1.1 ", response, j);
+	strCopyAll("HTTP/1.1 ", outputBytes, j);
 	if (statusCode == 200) {
-		strCopyAll("200 OK", response, j);
+		strCopyAll("200 OK", outputBytes, j);
 	} else {
-		strCopyAll("500 Error", response, j);
+		strCopyAll("500 Error", outputBytes, j);
 	}
-	response[j++] = CHR_CR;
-	response[j++] = CHR_LF;
+	outputBytes[j++] = CHR_CR;
+	outputBytes[j++] = CHR_LF;
 	i = j - index;
 }
 
@@ -124,68 +123,45 @@ void writeContentType(inout uint i, uint index, uint contentType) {
 	uint j = i + index;
 
 	uint contentTypeString[] = "Content-Type: ";
-	strCopyAll(contentTypeString, response, j);
+	strCopyAll(contentTypeString, outputBytes, j);
 	if (contentType == MIME_TEXT_PLAIN) {
-		strCopyAll("text/plain", response, j);
+		strCopyAll("text/plain", outputBytes, j);
 	} else {
-		strCopyAll("text/html", response, j);
+		strCopyAll("text/html", outputBytes, j);
 	}
-	response[j++] = CHR_CR;
-	response[j++] = CHR_LF;
+	outputBytes[j++] = CHR_CR;
+	outputBytes[j++] = CHR_LF;
 
 	i = j - index;
 }
 
 void writeEndHeaders(inout uint i, uint index) {
 	uint j = i + index;
-	response[j++] = CHR_CR;
-	response[j++] = CHR_LF;
+	outputBytes[j++] = CHR_CR;
+	outputBytes[j++] = CHR_LF;
 	i = j - index;
 }
 
 void writeBody(inout uint i, uint index, uvec2 path) {
 	uint j = i + index;
-	strCopyAll("Hello, World!", response, j);
-	response[j++] = CHR_LF;
+	strCopyAll("Hello, World!", outputBytes, j);
+	outputBytes[j++] = CHR_LF;
 	i = j - index;
 }
 
 void error(uint index) {
-	uint i = 0;
+	uint i = 16;
 	writeStatus(i, index, 500);
 	writeContentType(i, index, MIME_TEXT_PLAIN);
 	writeEndHeaders(i, index);
-	response[index + 1023] = i;
-}
-
-void unpackRequest(uint index) {
-	uint len = inputBytes[index/4u + 255u];
-	for (uint j = 0u; j < len/4u+1u; j++) {
-		uint v = inputBytes[index/4u + j];
-		uint off = index + j * 4u;
-		request[off + 0u] = v & 0xFFu;
-		request[off + 1u] = (v >> 8u) & 0xFFu;
-		request[off + 2u] = (v >> 16u) & 0xFFu;
-		request[off + 3u] = v >> 24u;
-	}
-}
-
-void packResponse(uint index) {
-	outputBytes[index/4u + 255u] = response[index + 1023u];
-	uint len = response[index + 1023u];
-	for (uint j = 0; j < len+1u; j++) {
-		uint off = index + j * 4u;
-		outputBytes[index/4u + j] = (
-			(response[off + 0u] & 0xFFu) |
-			((response[off + 1u] & 0xFFu) << 8u) |
-			((response[off + 2u] & 0xFFu) << 16u) |
-			((response[off + 3u] & 0xFFu) << 24u)
-		);
-	}
+	outputBytes[index+0] = ((i-16) << 0) & 0xFF;
+	outputBytes[index+1] = ((i-16) << 8) & 0xFF;
+	outputBytes[index+2] = ((i-16) << 16) & 0xFF;
+	outputBytes[index+3] = ((i-16) << 24) & 0xFF;
 }
 
 void handleRequest(uint index) {
-	uint i = 0;
+	uint i = 16;
 	uint method;
 	uvec2 path;
 	uint protocol;
@@ -202,17 +178,18 @@ void handleRequest(uint index) {
 		headerCount++;
 	}
 
-	i = 0;
+	i = 16;
 	writeStatus(i, index, 200);
 	writeContentType(i, index, MIME_TEXT_PLAIN);
 	writeEndHeaders(i, index);
 	writeBody(i, index, path);
-	response[index + 1023] = i;
+	outputBytes[index+0] = ((i-16) << 0) & 0xFF;
+	outputBytes[index+1] = ((i-16) << 8) & 0xFF;
+	outputBytes[index+2] = ((i-16) << 16) & 0xFF;
+	outputBytes[index+3] = ((i-16) << 24) & 0xFF;
 }
 
 void main() {
-	uint index = 1024 * (gl_GlobalInvocationID.x + gl_GlobalInvocationID.y * (gl_NumWorkGroups.x * gl_WorkGroupSize.x));
-	unpackRequest(index);
+	uint index = BLK_SZ * (gl_GlobalInvocationID.x + gl_GlobalInvocationID.y * (gl_NumWorkGroups.x * gl_WorkGroupSize.x));
 	handleRequest(index);
-	packResponse(index);
 }

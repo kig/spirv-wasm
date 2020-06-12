@@ -38,32 +38,28 @@ using namespace ispc;
 
 static const uint requestCount = NUM_WORKGROUPS_X * NUM_WORKGROUPS_Y * 32;
 
-static int inputBuffe[256 * requestCount] = {};
-static int outputBuffe[256 * requestCount] = {};
-static int heapBuffe[1024 * requestCount] = {};
-static int requestBuffe[1024 * requestCount] = {};
-static int responseBuffe[1024 * requestCount] = {};
+static uint8_t inputs[1024 * requestCount] = {};
+static uint8_t outputs[1024 * requestCount] = {};
+static uint8_t heaps[1024 * requestCount] = {};
 
 int main()
 {
-	int bytes = fread(((char*)inputBuffe), 1, 1020, stdin);
-	inputBuffe[255] = bytes;
+	int bytes = fread(((char*)inputs), 1, 1024-16, stdin);
+	((uint32_t*)inputs)[0] = bytes;
 	for (int i = 1; i < requestCount; i++) {
-		memcpy((void*)(inputBuffe + 256 * i), (void*)inputBuffe, bytes+16);
+		memcpy((void*)(inputs + 1024 * i), (void*)inputs, 1024);
 	}
 	for (int j = 0; j < 1000; j++) {
 		int32_t workgroups[] = {NUM_WORKGROUPS_X, NUM_WORKGROUPS_Y, 1};
 		runner_main(workgroups,
-			*(struct inputBuffer*)inputBuffe,
-			*(struct outputBuffer*)outputBuffe,
-			*(struct heapBuffer*)heapBuffe,
-			*(struct requestBuffer*)requestBuffe,
-			*(struct responseBuffer*)responseBuffe
+			*(struct inputBuffer*)inputs,
+			*(struct outputBuffer*)outputs,
+			*(struct heapBuffer*)heaps
 		);
 	}
 	for (int i = 0; i < 1; i++) {
-		printf("%d\n", outputBuffe[256*i+255]);
-		write(1, ((char*)outputBuffe)+1024*i, outputBuffe[256*i+255]);
+		printf("%d\n", ((uint32_t*)outputs)[256*i]);
+		write(1, outputs+1024*i, ((uint32_t*)outputs)[256*i]);
 	}
 
 	return 0;
