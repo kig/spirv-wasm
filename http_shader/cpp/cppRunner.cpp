@@ -14,11 +14,7 @@
  * limitations under the License.
  */
 
-#ifdef __EMSCRIPTEN__
-#include <emscripten.h>
-#else
 #include <unistd.h>
-#endif
 
 #include "spirv_cross/external_interface.h"
 #include <stdio.h>
@@ -35,22 +31,20 @@
 #include <glm/glm.hpp>
 using namespace glm;
 
-static const uint requestCount = 100000;
+// Build some input data for our compute shader.
+#define NUM_WORKGROUPS_X 32
+#define NUM_WORKGROUPS_Y 1
 
-static uint inputBuffer[256 * requestCount] = {};
-static uint outputBuffer[256 * requestCount] = {};
-static uint heapBuffer[1024 * requestCount] = {};
-static uint requestBuffer[1024 * requestCount] = {};
-static uint responseBuffer[1024 * requestCount] = {};
+static const uint requestCount = NUM_WORKGROUPS_X * NUM_WORKGROUPS_Y * 1024 * 16;
 
+static const int requestSize = 1024;
+
+static int inputBuffer[(requestSize / 4) * requestCount] = {};
+static int outputBuffer[(requestSize / 4) * requestCount] = {};
+static int heapBuffer[(requestSize / 4) * requestCount] = {};
 
 int main()
 {
-#ifdef __EMSCRIPTEN__
-	EM_ASM({
-	    console.time('compute');
-	});
-#endif
 	// First, we get the C interface to the shader.
 	// This can be loaded from a dynamic library, or as here,
 	// linked in as a static library.
@@ -58,10 +52,6 @@ int main()
 
 	// Create an instance of the shader interface.
 	auto *shader = iface->construct();
-
-// Build some input data for our compute shader.
-#define NUM_WORKGROUPS_X 50
-#define NUM_WORKGROUPS_Y 100
 
 	int bytes = fread((char*)inputBuffer, 1, 1024, stdin);
 	for (int i = 1; i < requestCount; i++) {
@@ -71,8 +61,21 @@ int main()
 	void *inputs_ptr = inputBuffer;
 	void *outputs_ptr = outputBuffer;
 	void *heap_ptr = heapBuffer;
-	void *requests_ptr = requestBuffer;
-	void *responses_ptr = responseBuffer;
+
+	int requestTemplate[(requestSize / 4)];
+	for (int i = 0; i < requestCount; i++) {
+		if (i % 2 == 0) {
+			snprintf((char*)(&inputBuffer[(requestSize / 4) * i + 4]), ((requestSize / 16) - 1) * 16, "POST /%07d HTTP/1.1\r\nhost: localhost\r\n\r\ntext/html\r\n\r\n<html><body>This is post number %d.</body></html>", i*2/3, i);
+		} else {
+			snprintf((char*)(&inputBuffer[(requestSize / 4) * i + 4]), ((requestSize / 16) - 1) * 16, "GET /%07d HTTP/1.1\r\nhost: localhost\r\n\r\n", i);
+		}
+		inputBuffer[(requestSize / 4) * i] = strlen((char*)(&inputBuffer[(requestSize / 4) * i + 4]));
+		// if (i < 10) printf("%d\n%s\n", inputBuffer[(requestSize / 4) * i], (char*)(&inputBuffer[(requestSize / 4) * i + 4]));
+
+		snprintf((char*)(&heapBuffer[(requestSize / 4) * i + 4]), ((requestSize / 16) - 1) * 16, "text/html\r\n\r\n<html><body>This is document number %d.</body></html>", i);
+		heapBuffer[(requestSize / 4) * i] = strlen((char*)(&heapBuffer[(requestSize / 4) * i + 4]));
+		// if (i < 10) printf("%d\n%s\n", heapBuffer[(requestSize / 4) * i], (char*)(&heapBuffer[(requestSize / 4) * i + 4]));
+	}
 
 	// Bind resources to the shader.
 	// For resources like samplers and buffers, we provide a list of pointers,
@@ -81,8 +84,6 @@ int main()
 	spirv_cross_set_resource(shader, 0, 0, &inputs_ptr, sizeof(inputs_ptr));
 	spirv_cross_set_resource(shader, 0, 1, &outputs_ptr, sizeof(outputs_ptr));
 	spirv_cross_set_resource(shader, 0, 2, &heap_ptr, sizeof(heap_ptr));
-	spirv_cross_set_resource(shader, 0, 3, &requests_ptr, sizeof(requests_ptr));
-	spirv_cross_set_resource(shader, 0, 4, &responses_ptr, sizeof(responses_ptr));
 
 	// We also have to set builtins.
 	// The relevant builtins will depend on the shader,
@@ -105,25 +106,10 @@ int main()
 	// Call destructor.
 	iface->destruct(shader);
 
-#ifdef __EMSCRIPTEN__
-	EM_ASM({
-	    console.timeEnd('compute');
-	    var c = Module.canvas;
-	    var ctx = c.getContext('2d');
-	    c.width = c.height = 1280;
-	    var id = ctx.createImageData(c.width, c.height);
-	    var data = id.data;
-            var off = $0 / 4;
-	    for (var i = 0; i < data.length; i++) {
-	      data[i] = (Module.HEAPF32[off + i] * 255.0) | 0;
-	    }
-	    ctx.putImageData(id, 0, 0);
-	}, (int)outputs_ptr);
-#else
-	for (int i = 0; i < 1; i++) {
-		write(1, ((char*)outputs_ptr)+4+1024*i, outputBuffer[256*i]);
+	for (int i = 0; i < 10; i++) {
+		write(1, ((char*)outputBuffer)+requestSize*i+16, outputBuffer[(requestSize / 4)*i]);
+		printf("\n");
 	}
-#endif
 
 	return 0;
 }

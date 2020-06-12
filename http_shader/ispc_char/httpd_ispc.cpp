@@ -44,12 +44,6 @@ static int heapBuffe[1024 * requestCount] = {};
 static int requestBuffe[1024 * requestCount] = {};
 static int responseBuffe[1024 * requestCount] = {};
 
-// Listen for requests on yon fucking listening socket.
-// Batch lots of requests in a single inputBuffer and
-// send it once it's full. Or if you hit the latency deadline.
-// Process the wee goblins into responses in the outputBuffer
-// and write out the results to the sockets.
-
 int main()
 {
 	int bytes = fread(((char*)inputBuffe), 1, 1020, stdin);

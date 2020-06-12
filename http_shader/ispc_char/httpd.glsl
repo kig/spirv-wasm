@@ -2,7 +2,7 @@
 
 version 450
 
-#include "chr.glsl"
+#include "../chr.glsl"
 
 #define strCopy(SRC, DST, i, start, end) uint _s = start; uint _e = end; while (_s < _e) (DST)[i++] = (SRC)[_s++];
 #define strCopyAll(SRC, DST, i) uint _str[] = SRC; strCopy(_str, DST, i, 0, _str.length())

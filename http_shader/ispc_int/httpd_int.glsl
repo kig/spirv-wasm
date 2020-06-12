@@ -2,7 +2,7 @@
 
 version 450
 
-#include "chr.glsl"
+#include "../chr.glsl"
 
 #define STRIDE 32
 

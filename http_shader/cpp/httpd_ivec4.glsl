@@ -2,7 +2,7 @@
 
 version 450
 
-#include "chr.glsl"
+#include "../chr.glsl"
 
 #define REQUEST_SIZE 1024
 #define RESPONSE_SIZE 1024

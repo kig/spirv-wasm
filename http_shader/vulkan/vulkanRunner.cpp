@@ -127,20 +127,20 @@ class ComputeApplication
         input = (char *)malloc(inputBufferSize);
         heap = (char *)malloc(heapBufferSize);
 
-		int requestTemplate[(maxRequestSize / 4)];
-		for (int i = 0; i < requestCount; i++) {
-			if (i % 2 == 0) {
-				snprintf((char*)(&input[(maxRequestSize) * i + 16]), ((maxRequestSize / 16) - 1) * 16, "POST /%07d HTTP/1.1\r\nhost: localhost\r\n\r\ntext/html\r\n\r\n<html><body>This is post number %d.</body></html>", i*2/3, i);
-			} else {
-				snprintf((char*)(&input[(maxRequestSize) * i + 16]), ((maxRequestSize / 16) - 1) * 16, "GET /%07d HTTP/1.1\r\nhost: localhost\r\n\r\n", i);
-			}
-			((int32_t*)input)[(maxRequestSize / 4) * i] = strlen(input + maxRequestSize * i + 16);
-			 if (i < 10) printf("%d\n%s\n", input[(maxRequestSize) * i], (char*)(&input[(maxRequestSize) * i + 16]));
+        int requestTemplate[(maxRequestSize / 4)];
+        for (int i = 0; i < requestCount; i++) {
+            if (i % 2 == 0) {
+                snprintf((char*)(&input[(maxRequestSize) * i + 16]), ((maxRequestSize / 16) - 1) * 16, "POST /%07d HTTP/1.1\r\nhost: localhost\r\n\r\ntext/html\r\n\r\n<html><body>This is post number %d.</body></html>", i*2/3, i);
+            } else {
+                snprintf((char*)(&input[(maxRequestSize) * i + 16]), ((maxRequestSize / 16) - 1) * 16, "GET /%07d HTTP/1.1\r\nhost: localhost\r\n\r\n", i);
+            }
+            ((int32_t*)input)[(maxRequestSize / 4) * i] = strlen(input + maxRequestSize * i + 16);
+            if (i < 10) printf("%d\n%s\n", input[(maxRequestSize) * i], (char*)(&input[(maxRequestSize) * i + 16]));
 
-			snprintf((char*)(&heap[(maxRequestSize) * i + 16]), ((maxRequestSize) - 1) * 16, "text/html\r\n\r\n<html><body>This is document number %d.</body></html>", i);
-			((int32_t*)heap)[(maxRequestSize / 4) * i] = strlen(heap + maxRequestSize * i + 16);
-			 if (i < 10) printf("%d\n%s\n", heap[(maxRequestSize) * i], (char*)(&heap[(maxRequestSize) * i + 16]));
-		}
+            snprintf((char*)(&heap[(maxRequestSize) * i + 16]), ((maxRequestSize) - 1) * 16, "text/html\r\n\r\n<html><body>This is document number %d.</body></html>", i);
+            ((int32_t*)heap)[(maxRequestSize / 4) * i] = strlen(heap + maxRequestSize * i + 16);
+             if (i < 10) printf("%d\n%s\n", heap[(maxRequestSize) * i], (char*)(&heap[(maxRequestSize) * i + 16]));
+        }
 
         // Initialize vulkan:
         createInstance();
@@ -163,14 +163,14 @@ class ComputeApplication
 
         writeHeap();
 
-			writeInput();
-		for (int i = 0; i < 1000; i++) {
+        for (int i = 0; i < 1000; i++) {
+            writeInput();
             startCommandBuffer();
             waitCommandBuffer();
             //swapOutputBuffers();
+            readOutput();
         }
-			readOutput();
-			writeOutput();
+            writeOutput();
 
         unmapMemory();
         cleanup();
