@@ -11,596 +11,268 @@ namespace Impl
 {
     struct Shader
     {
-        const std::array<uint32_t, 9> _344 = { 72u, 84u, 84u, 80u, 47u, 49u, 46u, 49u, 32u };
-        const std::array<uint32_t, 6> _377 = { 50u, 48u, 48u, 32u, 79u, 75u };
-        const std::array<uint32_t, 9> _400 = { 53u, 48u, 48u, 32u, 69u, 114u, 114u, 111u, 114u };
-        const std::array<uint32_t, 14> _442 = { 67u, 111u, 110u, 116u, 101u, 110u, 116u, 45u, 84u, 121u, 112u, 101u, 58u, 32u };
-        const std::array<uint32_t, 10> _473 = { 116u, 101u, 120u, 116u, 47u, 112u, 108u, 97u, 105u, 110u };
-        const std::array<uint32_t, 9> _495 = { 116u, 101u, 120u, 116u, 47u, 104u, 116u, 109u, 108u };
-        const std::array<uint32_t, 13> _546 = { 72u, 101u, 108u, 108u, 111u, 44u, 32u, 87u, 111u, 114u, 108u, 100u, 33u };
-        struct header
-        {
-            uvec2 name;
-            uvec2 value;
-        };
-        
         struct Resources : ComputeResources
         {
-            struct requestBuffer
-            {
-                uint32_t request[1];
-            };
-            
-            internal::Resource<requestBuffer> _94__;
-#define _94 __res->_94__.get()
-            
-            struct responseBuffer
-            {
-                uint32_t response[1];
-            };
-            
-            internal::Resource<responseBuffer> _358__;
-#define _358 __res->_358__.get()
-            
             struct inputBuffer
             {
-                uint32_t inputBytes[1];
+                ivec4 inputBytes[1];
             };
             
-            internal::Resource<inputBuffer> _612__;
-#define _612 __res->_612__.get()
-            
-            struct outputBuffer
-            {
-                uint32_t outputBytes[1];
-            };
-            
-            internal::Resource<outputBuffer> _655__;
-#define _655 __res->_655__.get()
+            internal::Resource<inputBuffer> _113__;
+#define _113 __res->_113__.get()
             
             struct heapBuffer
             {
-                uint32_t heap[1];
+                ivec4 heap[1];
             };
             
-            internal::Resource<heapBuffer> _901__;
-#define _901 __res->_901__.get()
+            internal::Resource<heapBuffer> _216__;
+#define _216 __res->_216__.get()
+            
+            struct outputBuffer
+            {
+                ivec4 outputBytes[1];
+            };
+            
+            internal::Resource<outputBuffer> _236__;
+#define _236 __res->_236__.get()
             
             inline void init(spirv_cross_shader& s)
             {
                 ComputeResources::init(s);
-                s.register_resource(_94__, 0, 3);
-                s.register_resource(_358__, 0, 4);
-                s.register_resource(_612__, 0, 0);
-                s.register_resource(_655__, 0, 1);
-                s.register_resource(_901__, 0, 2);
+                s.register_resource(_113__, 0, 0);
+                s.register_resource(_216__, 0, 2);
+                s.register_resource(_236__, 0, 1);
             }
         };
         
         Resources* __res;
         ComputePrivateResources __priv_res;
         
-        inline void unpackRequest(const uint32_t &index)
+        inline int32_t getE(const ivec4 &v, const int32_t &i)
         {
-            for (uint32_t j = 0u; j < 256u; j += uint32_t(1))
+            int32_t value = v.x;
+            if (i == 1)
             {
-                uint32_t v = _612.inputBytes[(index / 4u) + j];
-                uint32_t off = index + (j * 4u);
-                _94.request[off + 0u] = v & 255u;
-                _94.request[off + 1u] = (v >> uint32_t(8)) & 255u;
-                _94.request[off + 2u] = (v >> uint32_t(16)) & 255u;
-                _94.request[off + 3u] = v >> uint32_t(24);
+                value = v.y;
             }
+            else
+            {
+                if (i == 2)
+                {
+                    value = v.z;
+                }
+                else
+                {
+                    if (i == 3)
+                    {
+                        value = v.w;
+                    }
+                }
+            }
+            return value;
         }
         
-        inline void readMethod(uint32_t &i, const uint32_t &index, uint32_t &method)
+        inline void setE(ivec4 &v, const int32_t &i, const int32_t &value)
         {
-            uint32_t j = index + i;
-            uint32_t c = _94.request[j];
-            bool _128 = _94.request[j] == 71u;
-            bool _137;
-            if (_128)
+            if (i == 0)
             {
-                _137 = _94.request[j + 1u] == 69u;
+                v.x = value;
             }
             else
             {
-                _137 = _128;
-            }
-            bool _147;
-            if (_137)
-            {
-                _147 = _94.request[j + 2u] == 84u;
-            }
-            else
-            {
-                _147 = _137;
-            }
-            bool _157;
-            if (_147)
-            {
-                _157 = _94.request[j + 3u] == 32u;
-            }
-            else
-            {
-                _157 = _147;
-            }
-            if (_157)
-            {
-                method = 1u;
-                i += 4u;
-                return;
-            }
-            else
-            {
-                bool _169 = _94.request[j] == 80u;
-                bool _178;
-                if (_169)
+                if (i == 1)
                 {
-                    _178 = _94.request[j + 1u] == 79u;
+                    v.y = value;
                 }
                 else
                 {
-                    _178 = _169;
-                }
-                bool _187;
-                if (_178)
-                {
-                    _187 = _94.request[j + 2u] == 83u;
-                }
-                else
-                {
-                    _187 = _178;
-                }
-                bool _195;
-                if (_187)
-                {
-                    _195 = _94.request[j + 3u] == 84u;
-                }
-                else
-                {
-                    _195 = _187;
-                }
-                bool _203;
-                if (_195)
-                {
-                    _203 = _94.request[j + 4u] == 32u;
-                }
-                else
-                {
-                    _203 = _195;
-                }
-                if (_203)
-                {
-                    method = 2u;
-                    i += 5u;
-                    return;
-                }
-                else
-                {
-                    bool _214 = _94.request[j] == 79u;
-                    bool _223;
-                    if (_214)
+                    if (i == 2)
                     {
-                        _223 = _94.request[j + 6u] == 32u;
+                        v.z = value;
                     }
                     else
                     {
-                        _223 = _214;
-                    }
-                    if (_223)
-                    {
-                        method = 3u;
-                        i += 7u;
-                        return;
+                        v.w = value;
                     }
                 }
-            }
-            method = 0u;
-            i = 1024u;
-        }
-        
-        inline void writeStatus(uint32_t &i, const uint32_t &index, const uint32_t &statusCode)
-        {
-            uint32_t j = i + index;
-            uint32_t _s = 0u;
-            uint32_t _e = 9u;
-            while (_s < _e)
-            {
-                uint32_t _359 = j;
-                j = _359 + uint32_t(1);
-                uint32_t _361 = _s;
-                _s = _361 + uint32_t(1);
-                _358.response[_359] = _344[_361];
-            }
-            if (statusCode == 200u)
-            {
-                uint32_t _s_1 = 0u;
-                uint32_t _e_1 = 6u;
-                while (_s_1 < _e_1)
-                {
-                    uint32_t _388 = j;
-                    j = _388 + uint32_t(1);
-                    uint32_t _390 = _s_1;
-                    _s_1 = _390 + uint32_t(1);
-                    _358.response[_388] = _377[_390];
-                }
-            }
-            else
-            {
-                uint32_t _s_2 = 0u;
-                uint32_t _e_2 = 9u;
-                while (_s_2 < _e_2)
-                {
-                    uint32_t _411 = j;
-                    j = _411 + uint32_t(1);
-                    uint32_t _413 = _s_2;
-                    _s_2 = _413 + uint32_t(1);
-                    _358.response[_411] = _400[_413];
-                }
-            }
-            uint32_t _418 = j;
-            j = _418 + uint32_t(1);
-            _358.response[_418] = 13u;
-            uint32_t _421 = j;
-            j = _421 + uint32_t(1);
-            _358.response[_421] = 10u;
-            i = j - index;
-        }
-        
-        inline void writeContentType(uint32_t &i, const uint32_t &index, const uint32_t &contentType)
-        {
-            uint32_t j = i + index;
-            std::array<uint32_t, 14> _str = _442;
-            uint32_t _s = 0u;
-            uint32_t _e = 14u;
-            while (_s < _e)
-            {
-                uint32_t _455 = j;
-                j = _455 + uint32_t(1);
-                uint32_t _457 = _s;
-                _s = _457 + uint32_t(1);
-                _358.response[_455] = _str[_457];
-            }
-            if (contentType == 0u)
-            {
-                uint32_t _s_1 = 0u;
-                uint32_t _e_1 = 10u;
-                while (_s_1 < _e_1)
-                {
-                    uint32_t _484 = j;
-                    j = _484 + uint32_t(1);
-                    uint32_t _486 = _s_1;
-                    _s_1 = _486 + uint32_t(1);
-                    _358.response[_484] = _473[_486];
-                }
-            }
-            else
-            {
-                uint32_t _s_2 = 0u;
-                uint32_t _e_2 = 9u;
-                while (_s_2 < _e_2)
-                {
-                    uint32_t _506 = j;
-                    j = _506 + uint32_t(1);
-                    uint32_t _508 = _s_2;
-                    _s_2 = _508 + uint32_t(1);
-                    _358.response[_506] = _495[_508];
-                }
-            }
-            uint32_t _513 = j;
-            j = _513 + uint32_t(1);
-            _358.response[_513] = 13u;
-            uint32_t _516 = j;
-            j = _516 + uint32_t(1);
-            _358.response[_516] = 10u;
-            i = j - index;
-        }
-        
-        inline void writeEndHeaders(uint32_t &i, const uint32_t &index)
-        {
-            uint32_t j = i + index;
-            uint32_t _526 = j;
-            j = _526 + uint32_t(1);
-            _358.response[_526] = 13u;
-            uint32_t _529 = j;
-            j = _529 + uint32_t(1);
-            _358.response[_529] = 10u;
-            i = j - index;
-        }
-        
-        inline void error(const uint32_t &index)
-        {
-            uint32_t i = index + 1u;
-            uint32_t param = i;
-            uint32_t param_1 = index;
-            uint32_t param_2 = 500u;
-            writeStatus(param, param_1, param_2);
-            i = param;
-            uint32_t param_3 = i;
-            uint32_t param_4 = index;
-            uint32_t param_5 = 0u;
-            writeContentType(param_3, param_4, param_5);
-            i = param_3;
-            uint32_t param_6 = i;
-            uint32_t param_7 = index;
-            writeEndHeaders(param_6, param_7);
-            i = param_6;
-            _358.response[0] = (i - index) - 1u;
-        }
-        
-        inline void readRequestUntilChar(uint32_t &i, const uint32_t &index, const uint32_t &endChar, uvec2 &str)
-        {
-            str.x = index + i;
-            for (;;)
-            {
-                bool _88 = i < 1024u;
-                bool _105;
-                if (_88)
-                {
-                    _105 = _94.request[index + i] != endChar;
-                }
-                else
-                {
-                    _105 = _88;
-                }
-                if (_105)
-                {
-                    i += uint32_t(1);
-                    continue;
-                }
-                else
-                {
-                    break;
-                }
-            }
-            str.y = index + i;
-            i += uint32_t(1);
-        }
-        
-        inline void readPath(uint32_t &i, const uint32_t &index, uvec2 &path)
-        {
-            uint32_t param = i;
-            uint32_t param_1 = index;
-            uint32_t param_2 = 32u;
-            uvec2 param_3;
-            readRequestUntilChar(param, param_1, param_2, param_3);
-            i = param;
-            path = param_3;
-        }
-        
-        inline void readProtocol(uint32_t &i, const uint32_t &index, uint32_t &protocol)
-        {
-            uint32_t param = i;
-            uint32_t param_1 = index;
-            uint32_t param_2 = 13u;
-            uvec2 param_3;
-            readRequestUntilChar(param, param_1, param_2, param_3);
-            i = param;
-            uvec2 protocolString = param_3;
-            bool _251 = i < 1024u;
-            bool _261;
-            if (_251)
-            {
-                _261 = _94.request[index + i] == 10u;
-            }
-            else
-            {
-                _261 = _251;
-            }
-            if (_261)
-            {
-                i += uint32_t(1);
-                if (_94.request[protocolString.y - 1u] == 49u)
-                {
-                    protocol = 2u;
-                }
-                else
-                {
-                    protocol = 1u;
-                }
-            }
-            else
-            {
-                protocol = 0u;
-                i = 1024u;
-            }
-        }
-        
-        inline bool readHeader(uint32_t &i, const uint32_t &index, struct header &hdr)
-        {
-            if (_94.request[index + i] == 13u)
-            {
-                i += 2u;
-                return true;
-            }
-            uint32_t param = i;
-            uint32_t param_1 = index;
-            uint32_t param_2 = 58u;
-            uvec2 param_3;
-            readRequestUntilChar(param, param_1, param_2, param_3);
-            i = param;
-            hdr.name = param_3;
-            for (;;)
-            {
-                bool _306 = i < 1024u;
-                bool _315;
-                if (_306)
-                {
-                    _315 = _94.request[index + i] == 32u;
-                }
-                else
-                {
-                    _315 = _306;
-                }
-                if (_315)
-                {
-                    i += uint32_t(1);
-                    continue;
-                }
-                else
-                {
-                    break;
-                }
-            }
-            uint32_t param_4 = i;
-            uint32_t param_5 = index;
-            uint32_t param_6 = 13u;
-            uvec2 param_7;
-            readRequestUntilChar(param_4, param_5, param_6, param_7);
-            i = param_4;
-            hdr.value = param_7;
-            i += 2u;
-            return false;
-        }
-        
-        inline void writeBody(uint32_t &i, const uint32_t &index, const uvec2 &path)
-        {
-            uint32_t j = i + index;
-            uint32_t _s = 0u;
-            uint32_t _e = 13u;
-            while (_s < _e)
-            {
-                uint32_t _557 = j;
-                j = _557 + uint32_t(1);
-                uint32_t _559 = _s;
-                _s = _559 + uint32_t(1);
-                _358.response[_557] = _546[_559];
-            }
-            uint32_t _564 = j;
-            j = _564 + uint32_t(1);
-            _358.response[_564] = 10u;
-            i = j - index;
-        }
-        
-        inline void handleRequest(const uint32_t &index)
-        {
-            uint32_t i = 0u;
-            uint32_t headerCount = 0u;
-            uint32_t param = i;
-            uint32_t param_1 = index;
-            uint32_t param_2;
-            readMethod(param, param_1, param_2);
-            i = param;
-            uint32_t method = param_2;
-            if (i > 1024u)
-            {
-                uint32_t param_3 = index;
-                error(param_3);
-                return;
-            }
-            uint32_t param_4 = i;
-            uint32_t param_5 = index;
-            uvec2 param_6;
-            readPath(param_4, param_5, param_6);
-            i = param_4;
-            uvec2 path = param_6;
-            if (i > 1024u)
-            {
-                uint32_t param_7 = index;
-                error(param_7);
-                return;
-            }
-            uint32_t param_8 = i;
-            uint32_t param_9 = index;
-            uint32_t param_10;
-            readProtocol(param_8, param_9, param_10);
-            i = param_8;
-            uint32_t protocol = param_10;
-            if (i > 1024u)
-            {
-                uint32_t param_11 = index;
-                error(param_11);
-                return;
-            }
-            std::array<struct header, 32> headers;
-            struct header param_14;
-            for (uint32_t j = 0u; j < 32u; j += uint32_t(1))
-            {
-                uint32_t param_12 = i;
-                uint32_t param_13 = index;
-                bool _787 = readHeader(param_12, param_13, param_14);
-                i = param_12;
-                headers[j] = param_14;
-                bool done = _787;
-                if (i > 1024u)
-                {
-                    uint32_t param_15 = index;
-                    error(param_15);
-                    return;
-                }
-                if (done)
-                {
-                    break;
-                }
-                headerCount += uint32_t(1);
-            }
-            i = 1u;
-            uint32_t param_16 = i;
-            uint32_t param_17 = index;
-            uint32_t param_18 = 200u;
-            writeStatus(param_16, param_17, param_18);
-            i = param_16;
-            if (i > 1024u)
-            {
-                uint32_t param_19 = index;
-                error(param_19);
-                return;
-            }
-            uint32_t param_20 = i;
-            uint32_t param_21 = index;
-            uint32_t param_22 = 0u;
-            writeContentType(param_20, param_21, param_22);
-            i = param_20;
-            if (i > 1024u)
-            {
-                uint32_t param_23 = index;
-                error(param_23);
-                return;
-            }
-            uint32_t param_24 = i;
-            uint32_t param_25 = index;
-            writeEndHeaders(param_24, param_25);
-            i = param_24;
-            if (i > 1024u)
-            {
-                uint32_t param_26 = index;
-                error(param_26);
-                return;
-            }
-            uint32_t param_27 = i;
-            uint32_t param_28 = index;
-            uvec2 param_29 = path;
-            writeBody(param_27, param_28, param_29);
-            i = param_27;
-            if (i > 1024u)
-            {
-                uint32_t param_30 = index;
-                error(param_30);
-                return;
-            }
-            _358.response[index] = i - 1u;
-        }
-        
-        inline void packResponse(const uint32_t &index)
-        {
-            _655.outputBytes[index / 4u] = _358.response[index];
-            for (uint32_t j = 0u; j < ((_358.response[index] / 4u) + 1u); j += uint32_t(1))
-            {
-                uint32_t off = (1u + index) + (j * 4u);
-                _655.outputBytes[((index / 4u) + j) + 1u] = ((((_358.response[off + 3u] & 255u) << uint32_t(24)) | ((_358.response[off + 2u] & 255u) << uint32_t(16))) | ((_358.response[off + 1u] & 255u) << uint32_t(8))) | (_358.response[off + 0u] & 255u);
             }
         }
         
         inline void main()
         {
-            uint32_t index = 1024u * (gl_GlobalInvocationID.x + (gl_GlobalInvocationID.y * (gl_NumWorkGroups.x * 20u)));
-            uint32_t param = index;
-            unpackRequest(param);
-            uint32_t param_1 = index;
-            handleRequest(param_1);
-            uint32_t param_2 = index;
-            packResponse(param_2);
+            int32_t wgId = int32_t(gl_GlobalInvocationID.x) * 4096;
+            for (int32_t j = 0; j < 4096; j++)
+            {
+                int32_t reqOff = (wgId + j) * 64;
+                int32_t resOff = (wgId + j) * 64;
+                ivec4 requestInfo = _113.inputBytes[reqOff];
+                if (requestInfo.x == 0)
+                {
+                    continue;
+                }
+                ivec4 req = _113.inputBytes[reqOff + 1];
+                ivec4 req2 = _113.inputBytes[reqOff + 2];
+                int32_t method = req.x;
+                int32_t i = resOff;
+                if (method == 542393671)
+                {
+                    int32_t key = ((((((((((req.y >> 8) & 255) - 48) * 1000000) + ((((req.y >> 16) & 255) - 48) * 100000)) + ((((req.y >> 24) & 255) - 48) * 10000)) + ((((req.z >> 0) & 255) - 48) * 1000)) + ((((req.z >> 8) & 255) - 48) * 100)) + ((((req.z >> 16) & 255) - 48) * 10)) + ((((req.z >> 24) & 255) - 48) * 1)) * 64;
+                    int32_t _205 = key;
+                    int32_t _207 = key;
+                    bool _210 = (_205 >= 0) && (_207 < 33554432);
+                    bool _222;
+                    if (_210)
+                    {
+                        _222 = _216.heap[key].x > 0;
+                    }
+                    else
+                    {
+                        _222 = _210;
+                    }
+                    bool _230;
+                    if (_222)
+                    {
+                        _230 = _216.heap[key].x <= 976;
+                    }
+                    else
+                    {
+                        _230 = _222;
+                    }
+                    if (_230)
+                    {
+                        _236.outputBytes[i + 0] = ivec4(32 + _216.heap[key].x, 0, 0, 0);
+                        _236.outputBytes[i + 1] = ivec4(540028978, 1210075983, 793793620, 221326897);
+                        _236.outputBytes[i + 2] = ivec4(1852793610, 1953391988, 1887007789, 538983013);
+                        int32_t len = (_216.heap[key].x / 16) + int32_t((_216.heap[key].x % 16) > 0);
+                        for (int32_t k = 0; k < len; k++)
+                        {
+                            _236.outputBytes[(i + 3) + k] = _216.heap[(key + 1) + k];
+                        }
+                        continue;
+                    }
+                }
+                else
+                {
+                    if (method == 1414745936)
+                    {
+                        int32_t key_1 = ((((((((((req.y >> 16) & 255) - 48) * 1000000) + ((((req.y >> 24) & 255) - 48) * 100000)) + ((((req.z >> 0) & 255) - 48) * 10000)) + ((((req.z >> 8) & 255) - 48) * 1000)) + ((((req.z >> 16) & 255) - 48) * 100)) + ((((req.z >> 24) & 255) - 48) * 10)) + ((((req.w >> 0) & 255) - 48) * 1)) * 64;
+                        if ((key_1 >= 0) && (key_1 < 33554432))
+                        {
+                            int32_t rnrn = 0;
+                            int32_t readStart = 0;
+                            int32_t readEnd = 512;
+                            ivec4 w = ivec4(0);
+                            int32_t l = 0;
+                            int32_t hi = 0;
+                            for (int32_t k_1 = 13; (k_1 < 1024) && (k_1 < 1024); k_1++)
+                            {
+                                int32_t v4i = k_1 / 16;
+                                int32_t vi = k_1 - (v4i * 16);
+                                int32_t c = vi / 4;
+                                int32_t b = vi - (c * 4);
+                                ivec4 param = _113.inputBytes[(reqOff + 1) + v4i];
+                                int32_t param_1 = c;
+                                int32_t chr = (getE(param, param_1) >> (b * 8)) & 255;
+                                if (readStart > 0)
+                                {
+                                    if (chr == 0)
+                                    {
+                                        readEnd = k_1;
+                                        break;
+                                    }
+                                    int32_t wc = l / 4;
+                                    int32_t wb = l - (wc * 4);
+                                    ivec4 param_2 = w;
+                                    int32_t param_3 = wc;
+                                    ivec4 param_4 = w;
+                                    int32_t param_5 = wc;
+                                    int32_t param_6 = getE(param_2, param_3) | (chr << (wb * 8));
+                                    setE(param_4, param_5, param_6);
+                                    w = param_4;
+                                    l++;
+                                    if (l == 16)
+                                    {
+                                        _216.heap[(key_1 + 1) + hi] = w;
+                                        hi++;
+                                        w *= ivec4(0);
+                                        l = 0;
+                                    }
+                                }
+                                else
+                                {
+                                    int32_t _466 = chr;
+                                    bool _467 = _466 == 13;
+                                    bool _473;
+                                    if (_467)
+                                    {
+                                        _473 = (rnrn & 1) == 0;
+                                    }
+                                    else
+                                    {
+                                        _473 = _467;
+                                    }
+                                    if (_473)
+                                    {
+                                        rnrn++;
+                                    }
+                                    else
+                                    {
+                                        int32_t _479 = chr;
+                                        bool _480 = _479 == 10;
+                                        bool _486;
+                                        if (_480)
+                                        {
+                                            _486 = (rnrn & 1) == 1;
+                                        }
+                                        else
+                                        {
+                                            _486 = _480;
+                                        }
+                                        if (_486)
+                                        {
+                                            rnrn++;
+                                            if (rnrn == 4)
+                                            {
+                                                readStart = k_1;
+                                            }
+                                        }
+                                        else
+                                        {
+                                            rnrn = 0;
+                                        }
+                                    }
+                                }
+                            }
+                            int32_t _499 = l;
+                            bool _500 = _499 > 0;
+                            bool _506;
+                            if (_500)
+                            {
+                                _506 = (1 + hi) < 64;
+                            }
+                            else
+                            {
+                                _506 = _500;
+                            }
+                            if (_506)
+                            {
+                                _216.heap[(key_1 + 1) + hi] = w;
+                            }
+                            _216.heap[key_1].x = readEnd - readStart;
+                            _236.outputBytes[i + 0] = ivec4(48, 0, 0, 0);
+                            _236.outputBytes[i + 1] = ivec4(540028978, 1210075983, 793793620, 221326897);
+                            _236.outputBytes[i + 2] = ivec4(1852793610, 1953391988, 1887007789, 1948269157);
+                            _236.outputBytes[i + 3] = ivec4(796162149, 1767992432, 218762606, 776687370);
+                            continue;
+                        }
+                    }
+                }
+                _236.outputBytes[i + 0] = ivec4(34, 0, 0, 0);
+                _236.outputBytes[i + 1] = ivec4(540028981, 541344066, 1347703880, 825110831);
+                _236.outputBytes[i + 2] = ivec4(168626701, req.x, req.y, req.z);
+                _236.outputBytes[i + 3] = ivec4(req.w, req2.x, req2.y, req2.z);
+            }
         }
         
     };
@@ -608,17 +280,17 @@ namespace Impl
 
 spirv_cross_shader_t *spirv_cross_construct(void)
 {
-    return new ComputeShader<Impl::Shader, Impl::Shader::Resources, 20, 1, 1>();
+    return new ComputeShader<Impl::Shader, Impl::Shader::Resources, 4, 1, 1>();
 }
 
 void spirv_cross_destruct(spirv_cross_shader_t *shader)
 {
-    delete static_cast<ComputeShader<Impl::Shader, Impl::Shader::Resources, 20, 1, 1>*>(shader);
+    delete static_cast<ComputeShader<Impl::Shader, Impl::Shader::Resources, 4, 1, 1>*>(shader);
 }
 
 void spirv_cross_invoke(spirv_cross_shader_t *shader)
 {
-    static_cast<ComputeShader<Impl::Shader, Impl::Shader::Resources, 20, 1, 1>*>(shader)->invoke();
+    static_cast<ComputeShader<Impl::Shader, Impl::Shader::Resources, 4, 1, 1>*>(shader)->invoke();
 }
 
 static const struct spirv_cross_interface vtable =

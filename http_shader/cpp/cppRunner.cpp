@@ -53,11 +53,6 @@ int main()
 	// Create an instance of the shader interface.
 	auto *shader = iface->construct();
 
-	int bytes = fread((char*)inputBuffer, 1, 1024, stdin);
-	for (int i = 1; i < requestCount; i++) {
-		memcpy((void*)(inputBuffer + 256 * i), (void*)inputBuffer, bytes);
-	}
-
 	void *inputs_ptr = inputBuffer;
 	void *outputs_ptr = outputBuffer;
 	void *heap_ptr = heapBuffer;
@@ -77,30 +72,34 @@ int main()
 		// if (i < 10) printf("%d\n%s\n", heapBuffer[(requestSize / 4) * i], (char*)(&heapBuffer[(requestSize / 4) * i + 4]));
 	}
 
-	// Bind resources to the shader.
-	// For resources like samplers and buffers, we provide a list of pointers,
-	// since UBOs, SSBOs and samplers can be arrays, and can point to different types,
-	// which is especially true for samplers.
-	spirv_cross_set_resource(shader, 0, 0, &inputs_ptr, sizeof(inputs_ptr));
-	spirv_cross_set_resource(shader, 0, 1, &outputs_ptr, sizeof(outputs_ptr));
-	spirv_cross_set_resource(shader, 0, 2, &heap_ptr, sizeof(heap_ptr));
+	for (int i = 0; i < 1000; i++) {
 
-	// We also have to set builtins.
-	// The relevant builtins will depend on the shader,
-	// but for compute, there are few builtins, which are gl_NumWorkGroups and gl_WorkGroupID.
-	// LocalInvocationID and GlobalInvocationID are inferred when executing the invocation.
-	uvec3 num_workgroups(NUM_WORKGROUPS_X, NUM_WORKGROUPS_Y, 1);
-	uvec3 work_group_id(0, 0, 0);
-	spirv_cross_set_builtin(shader, SPIRV_CROSS_BUILTIN_NUM_WORK_GROUPS, &num_workgroups, sizeof(num_workgroups));
-	spirv_cross_set_builtin(shader, SPIRV_CROSS_BUILTIN_WORK_GROUP_ID, &work_group_id, sizeof(work_group_id));
+		// Bind resources to the shader.
+		// For resources like samplers and buffers, we provide a list of pointers,
+		// since UBOs, SSBOs and samplers can be arrays, and can point to different types,
+		// which is especially true for samplers.
+		spirv_cross_set_resource(shader, 0, 0, &inputs_ptr, sizeof(inputs_ptr));
+		spirv_cross_set_resource(shader, 0, 1, &outputs_ptr, sizeof(outputs_ptr));
+		spirv_cross_set_resource(shader, 0, 2, &heap_ptr, sizeof(heap_ptr));
 
-	// Execute work groups.
-	for (unsigned x = 0; x < NUM_WORKGROUPS_X; x++)
-	for (unsigned y = 0; y < NUM_WORKGROUPS_Y; y++)
-	{
-		work_group_id.x = x;
-		work_group_id.y = y;
-		iface->invoke(shader);
+		// We also have to set builtins.
+		// The relevant builtins will depend on the shader,
+		// but for compute, there are few builtins, which are gl_NumWorkGroups and gl_WorkGroupID.
+		// LocalInvocationID and GlobalInvocationID are inferred when executing the invocation.
+		uvec3 num_workgroups(NUM_WORKGROUPS_X, NUM_WORKGROUPS_Y, 1);
+		uvec3 work_group_id(0, 0, 0);
+		spirv_cross_set_builtin(shader, SPIRV_CROSS_BUILTIN_NUM_WORK_GROUPS, &num_workgroups, sizeof(num_workgroups));
+		spirv_cross_set_builtin(shader, SPIRV_CROSS_BUILTIN_WORK_GROUP_ID, &work_group_id, sizeof(work_group_id));
+
+		// Execute work groups.
+		for (unsigned x = 0; x < NUM_WORKGROUPS_X; x++)
+		for (unsigned y = 0; y < NUM_WORKGROUPS_Y; y++)
+		{
+			work_group_id.x = x;
+			work_group_id.y = y;
+			iface->invoke(shader);
+		}
+
 	}
 
 	// Call destructor.

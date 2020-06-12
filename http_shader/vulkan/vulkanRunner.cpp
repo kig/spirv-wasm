@@ -163,13 +163,13 @@ class ComputeApplication
 
         writeHeap();
 
-        for (int i = 0; i < 1000; i++) {
             writeInput();
+        for (int i = 0; i < 1000; i++) {
             startCommandBuffer();
             waitCommandBuffer();
             //swapOutputBuffers();
-            readOutput();
         }
+            readOutput();
             writeOutput();
 
         unmapMemory();
@@ -256,7 +256,7 @@ class ComputeApplication
 
     void writeOutput()
     {
-    	for (int i = 0; i < 1; i++) {
+    	for (int i = 0; i < 10; i++) {
     		char *responsePtr = (char*)mappedOutputMemory + i * maxResponseSize;
     		uint32_t responseByteLength = *(uint32_t*)responsePtr;
 	        fwrite(responsePtr + 16, responseByteLength, 1, stdout);

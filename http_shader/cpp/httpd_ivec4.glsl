@@ -8,11 +8,11 @@ version 450
 #define RESPONSE_SIZE 1024
 #define HEAP_SIZE 1024
 
-#define REQUESTS_PER_INVOCATION 1024
+#define REQUESTS_PER_INVOCATION 4096
 
-#define HEAP_TOTAL_SZ (32 * 16 * 1024 * (HEAP_SIZE / 16))
+#define HEAP_TOTAL_SZ (32 * 4 * 4096 * (HEAP_SIZE / 16))
 
-layout ( local_size_x = 16, local_size_y = 1, local_size_z = 1 ) in;
+layout ( local_size_x = 4, local_size_y = 1, local_size_z = 1 ) in;
 
 layout(std430, binding = 0) readonly buffer inputBuffer { highp ivec4 inputBytes[]; };
 layout(std430, binding = 1) buffer outputBuffer { highp ivec4 outputBytes[]; };

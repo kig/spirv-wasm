@@ -159,27 +159,27 @@ void error(uint index) {
 }
 
 void unpackRequest(uint index) {
-	uint len = inputBytes[index/4 + 255];
-	for (uint j = 0; j < len/4+1; j++) {
-		uint v = inputBytes[index/4 + j];
-		uint off = index + j * 4;
-		request[off + 0] = v & 0xFF;
-		request[off + 1] = (v >> 8) & 0xFF;
-		request[off + 2] = (v >> 16) & 0xFF;
-		request[off + 3] = v >> 24;
+	uint len = inputBytes[index/4u + 255u];
+	for (uint j = 0u; j < len/4u+1u; j++) {
+		uint v = inputBytes[index/4u + j];
+		uint off = index + j * 4u;
+		request[off + 0u] = v & 0xFFu;
+		request[off + 1u] = (v >> 8u) & 0xFFu;
+		request[off + 2u] = (v >> 16u) & 0xFFu;
+		request[off + 3u] = v >> 24u;
 	}
 }
 
 void packResponse(uint index) {
-	outputBytes[index/4 + 255] = response[index + 1023];
-	uint len = response[index + 1023];
-	for (uint j = 0; j < len+1; j++) {
-		uint off = index + j * 4;
-		outputBytes[index/4 + j] = (
-			(response[off + 0] & 0xFF) |
-			((response[off + 1] & 0xFF) << 8) |
-			((response[off + 2] & 0xFF) << 16) |
-			((response[off + 3] & 0xFF) << 24)
+	outputBytes[index/4u + 255u] = response[index + 1023u];
+	uint len = response[index + 1023u];
+	for (uint j = 0; j < len+1u; j++) {
+		uint off = index + j * 4u;
+		outputBytes[index/4u + j] = (
+			(response[off + 0u] & 0xFFu) |
+			((response[off + 1u] & 0xFFu) << 8u) |
+			((response[off + 2u] & 0xFFu) << 16u) |
+			((response[off + 3u] & 0xFFu) << 24u)
 		);
 	}
 }
