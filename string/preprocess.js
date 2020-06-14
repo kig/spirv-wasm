@@ -11,12 +11,22 @@ let stringSegments = [];
 
 const output = [];
 
+const globals = [];
+const init = [];
+
 for (segment of segments) {
 	if (segment === '"' && lastSegment[lastSegment.length-1] !== '\\') {
 		inString = !inString;
 		if (!inString) {
 			const str = stringSegments.join('');
-			output.push(`{${Buffer.from(JSON.parse('"'+str+'"')).join(",")}}`);
+			const buf = Buffer.from(JSON.parse('"'+str+'"'));
+			const len = buf.length;
+			const v = `_global_${globals.length}_`;
+			const assigns = [];
+			for (let i = 0; i < len; i++) assigns.push(`setC(${v}, ${i}, ${buf[i]})`);
+			output.push(v);
+			globals.push(`ivec2 ${v} = malloc(${len});`);
+			init.push(`${assigns.join(';')};`);
 		}
 		stringSegments = [];
 	} else if (inString) {
@@ -24,8 +34,12 @@ for (segment of segments) {
 	} else if (segment === "'" && lastSegment[lastSegment.length-1] !== '\\') {
 		inChar = !inChar;
 		if (!inChar) {
-			const str = stringSegments.join('');
-			output.push(`${Buffer.from(eval("'"+str+"'")).readInt32LE(0)}`);
+			const str = eval("'" + stringSegments.join('') + "'");
+			if (str.length == 4) {
+				output.push(`${Buffer.from(str).readInt32LE(0)}`);
+			} else if (str.length == 1) {
+				output.push(`${Buffer.from(str)[0]}`);
+			}
 		}
 		stringSegments = [];
 	} else if (inChar) {
@@ -36,4 +50,4 @@ for (segment of segments) {
 	lastSegment = segment;
 }
 
-console.log(output.join(''));
+console.log(output.join('').replace('%%GLOBALS%%', globals.join('\n')).replace('%%INIT%%', init.join('\n')));
