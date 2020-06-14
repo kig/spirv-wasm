@@ -99,7 +99,7 @@ class ComputeApplication
     uint32_t vulkanDeviceIndex = 0;
 
     uint32_t maxRequestSize = 1024;
-    uint32_t maxResponseSize = 1024;
+    uint32_t maxResponseSize = 1024 * 4;
     uint32_t heapSize = 8192 * 4;
 
     uint32_t workSize[3] = {1, 1, 1};
@@ -108,7 +108,7 @@ class ComputeApplication
 
     const char *programFileName;
 
-    uint32_t requestCount = workSize[0] * workSize[1] * workSize[2];
+    uint32_t requestCount = workSize[0] * workSize[1] * workSize[2] * 16;
 
   public:
     void run(const char *fileName)
@@ -248,17 +248,19 @@ class ComputeApplication
 
     void writeOutput()
     {
-    	bool allOk = true;
-        for (int i = 0; i < 1024; i++) {
-            int ok = ((int*)mappedOutputMemory)[i];
-            if (ok == 0) break;
-            if (ok != 1) {
-            	printf("Test %d failed: %d\n", i, ok);
-            	allOk = false;
-            }
-        }
-        if (allOk) {
-        	printf("All tests succeeded.\n");
+    	for (int j = 0; j < requestCount; j++) {
+	    	bool allOk = true;
+	        for (int i = 0; i < 1024; i++) {
+	            int ok = ((int*)mappedOutputMemory)[i + j*1024];
+	            if (ok == 0) break;
+	            if (ok != 1) {
+	            	printf("[%d] Test %d failed: %d\n", j, i, ok);
+	            	allOk = false;
+	            }
+	        }
+	        if (allOk) {
+	        	printf("[%d] All tests succeeded.\n", j);
+	        }
         }
         fflush(stdout);
         // vkUnmapMemory(device, bufferMemory);

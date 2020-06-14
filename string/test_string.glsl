@@ -15,7 +15,7 @@ layout(std430, binding = 2) buffer heapBuffer { lowp int heap[]; };
 void main() {
 	initGlobals();
 	
-	int op = 0; 
+	int op = int(gl_GlobalInvocationID.x) * 1024;
 
 	string s = malloc(10);
 	int len = strLen(s);
