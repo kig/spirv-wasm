@@ -3,7 +3,10 @@
 #define stringArray ivec2
 #define string ivec2
 
-int heapPtr = int(gl_GlobalInvocationID.x) * HEAP_SIZE;
+int heapStart = int(gl_GlobalInvocationID.x) * HEAP_SIZE;
+int heapEnd = heapStart + HEAP_SIZE;
+
+int heapPtr = heapStart;
 
 int strLen(ivec2 str) {
 	return str.y - str.x;

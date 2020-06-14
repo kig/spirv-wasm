@@ -3,7 +3,7 @@ version 450
 
 #define HEAP_SIZE 8192
 
-layout ( local_size_x = 16, local_size_y = 1, local_size_z = 1 ) in;
+layout ( local_size_x = 1, local_size_y = 1, local_size_z = 1 ) in;
 
 layout(std430, binding = 0) readonly buffer inputBuffer { highp int inputs[]; };
 layout(std430, binding = 1) buffer outputBuffer { highp int outputs[]; };
@@ -14,6 +14,7 @@ layout(std430, binding = 2) buffer heapBuffer { lowp int heap[]; };
 
 void main() {
 	initGlobals();
+	int heapTop = heapPtr;
 	
 	int op = int(gl_GlobalInvocationID.x) * 1024;
 
@@ -307,5 +308,5 @@ void main() {
 	outputs[op++] = strCmpI("aBcD", "AbCd") == 0 ? 1 : -1;
 	outputs[op++] = strCmpI("", "aBc") < 0 ? 1 : -1; // 190
 	outputs[op++] = strCmpI("aBc", "") > 0 ? 1 : -1; // 191
-	
+
 }

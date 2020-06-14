@@ -102,13 +102,13 @@ class ComputeApplication
     uint32_t maxResponseSize = 1024 * 4;
     uint32_t heapSize = 8192 * 4;
 
-    uint32_t workSize[3] = {1, 1, 1};
+    uint32_t workSize[3] = {16, 1, 1};
     char *input;
     char *heap;
 
     const char *programFileName;
 
-    uint32_t requestCount = workSize[0] * workSize[1] * workSize[2] * 16;
+    uint32_t requestCount = workSize[0] * workSize[1] * workSize[2] * 1;
 
   public:
     void run(const char *fileName)
@@ -150,19 +150,19 @@ class ComputeApplication
         writeHeap();
 
             writeInput();
-        //std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
-        for (int i = 0; i < 1; i++) {
+        std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
+        for (int i = 0; i < 100; i++) {
             startCommandBuffer();
             waitCommandBuffer();
             //swapOutputBuffers();
         }
-        //std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
+        std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
             readOutput();
             writeOutput();
 
 
-        //printf("\nElapsed: %ld ms\n", std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count());
-        //printf("Million requests per second: %.3f\n\n", 1e-6 * (requestCount * 100.0) / (0.001 * std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count()));
+        printf("\nElapsed: %ld ms\n", std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count());
+        printf("Test runs per second: %.0f\n\n", (requestCount * 100.0) / (0.001 * std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count()));
 
         unmapMemory();
         cleanup();
