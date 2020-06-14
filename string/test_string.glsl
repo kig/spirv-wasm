@@ -17,7 +17,7 @@ void main() {
 	
 	int op = int(gl_GlobalInvocationID.x) * 1024;
 
-	string empty = "";
+	string emptys = "";
 
 	string s = malloc(10);
 	int len = strLen(s);
