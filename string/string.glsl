@@ -331,6 +331,7 @@ string replace(string s, string pattern, string replacement) {
 }
 
 string repeat(int char, int count) {
+	count = max(0, count);
 	string s = malloc(count);
 	for (int i = s.x; i < s.y; i++) {
 		heap[i] = char;
@@ -339,6 +340,7 @@ string repeat(int char, int count) {
 }
 
 string repeat(string pattern, int count) {
+	count = max(0, count);
 	int len = strLen(pattern);
 	string s = malloc(count * len);
 	for (int i = s.x; i < s.y; i += len) {
@@ -348,7 +350,8 @@ string repeat(string pattern, int count) {
 } 
 
 string padStart(string s, int len, int filler) {
-	int slen = strLen(s);
+	len = max(0, len);
+	int slen = max(0, strLen(s));
 	int diff = len - slen;
 	string res = malloc(max(slen, len));
 	for (int i = 0; i < diff; i++) {
@@ -359,7 +362,8 @@ string padStart(string s, int len, int filler) {
 }
 
 string padEnd(string s, int len, int filler) {
-	int slen = strLen(s);
+	len = max(0, len);
+	int slen = max(0, strLen(s));
 	int diff = len - slen;
 	string res = malloc(max(slen, len));
 	for (int i = 0; i < diff; i++) {
@@ -370,11 +374,13 @@ string padEnd(string s, int len, int filler) {
 }
 
 string truncate(string s, int maxLen) {
-	return string(s.x, s.x + min(maxLen, strLen(s)));
+	maxLen = max(0, maxLen);
+	return string(s.x, s.x + min(maxLen, max(0, strLen(s))));
 }
 
 string truncateEnd(string s, int maxLen) {
-	return string(s.x + max(0, strLen(s) - maxLen), s.y);
+	maxLen = max(0, maxLen);
+	return string(s.x + max(0, max(0, strLen(s)) - maxLen), s.y);
 }
 
 bool startsWith(string s, string prefix) {
@@ -392,8 +398,9 @@ bool includes(string s, string key) {
 string trimStart(string s) {
 	for (int i = s.x; i < s.y; i++) {
 		int c = heap[i];
-		if (!isWhitespace(c)) {
-			s.x = i;
+		if (isWhitespace(c)) {
+			s.x++;
+		} else {
 			break;
 		}
 	}
@@ -403,8 +410,9 @@ string trimStart(string s) {
 string trimEnd(string s) {
 	for (int i = s.y-1; i >= s.x; i--) {
 		int c = heap[i];
-		if (!isWhitespace(c)) {
-			s.y = i;
+		if (isWhitespace(c)) {
+			s.y--;
+		} else {
 			break;
 		}
 	}

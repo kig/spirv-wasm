@@ -143,8 +143,8 @@ void main() {
 
 	string trims = " \t\nhi  \r\n  \t  ";
 	outputs[op++] = strCmp(trimStart(trims), slice(trims, 3)) == 0 ? 1 : -1;
-	outputs[op++] = strCmp(trimEnd(trims), slice(trims, 0, 5)) == 0 ? 1 : -1;
-	outputs[op++] = strCmp(trim(trims), slice(trims, 3, 5)) == 0 ? 1 : -1;
+	outputs[op++] = strCmp(trimEnd(trims), slice(trims, 0, 5)) == 0 ? 1 : strLen(trimEnd(trims));
+	outputs[op++] = strCmp(trim(trims), slice(trims, 3, 5)) == 0 ? 1 : strLen(slice(trims, 0, 5));
 	outputs[op++] = strCmp(trim(slice(trims, 0, 0)), slice(trims, 0, 0)) == 0 ? 1 : -1;
 	outputs[op++] = strCmp(trim(slice(trims, 0, 3)), slice(trims, 0, 0)) == 0 ? 1 : -1;
 
