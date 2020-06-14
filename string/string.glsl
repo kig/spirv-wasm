@@ -154,6 +154,38 @@ int lastIndexOf(string s, int c) {
 	return -1;
 }
 
+int lastIndexOf(string s, string key) {
+	int len = strLen(key);
+	if (len == 0) return strLen(s);
+	if (len < 0) return -1;
+	for (int i = s.y-len; i >= s.x; i--) {
+		if (strCmp(string(i, i+len), key) == 0) {
+			return i - s.x;
+		}
+	}
+	return -1;
+}
+
+int lastIndexOfI(string s, int c) {
+	int lc = lowercase(c);
+	for (int i = s.y-1; i >= s.x; i--) {
+		if (lowercase(heap[i]) == lc) return i - s.x;
+	}
+	return -1;
+}
+
+int lastIndexOfI(string s, string key) {
+	int len = strLen(key);
+	if (len == 0) return strLen(s);
+	if (len < 0) return -1;
+	for (int i = s.y-len; i >= s.x; i--) {
+		if (strCmpI(string(i, i+len), key) == 0) {
+			return i - s.x;
+		}
+	}
+	return -1;
+}
+
 int normalizeIndex(int i, int len) {
 	return clamp((i < 0) ? i + len : i, 0, len - 1);
 }
