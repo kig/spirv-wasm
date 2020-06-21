@@ -5,12 +5,12 @@ version 450
 
 struct ioRequest {
     int ioType;
-    string filename;
+    ivec2 filename;
     int offset;
     int count;
-    string result;
+    ivec2 result;
     int status;
-}
+};
 
 layout ( local_size_x = 1, local_size_y = 1, local_size_z = 1 ) in;
 
@@ -32,17 +32,19 @@ bool testRead() {
 bool testWrite() {
     string buf = malloc(100);
     string filename = "write.txt";
-    int ok;
-    int reqNum = write(filename, 0, 100, "Hello, write!");
+    string res;
+    int ok, reqNum;
+
+    reqNum = write(filename, 0, 100, "Hello, write!");
     awaitIO(reqNum, ok);
-    int reqNum = read(filename, 0, 100, buf);
-    string res = awaitIO(reqNum, ok);
+    reqNum = read(filename, 0, 100, buf);
+    res = awaitIO(reqNum, ok);
     bool firstOk = strCmp(res, "Hello, write!") == 0;
 
-    int reqNum = write(filename, 0, 100, "Hello, world!");
+    reqNum = write(filename, 0, 100, "Hello, world!");
     awaitIO(reqNum, ok);
-    int reqNum = read(filename, 0, 100, buf);
-    string res = awaitIO(reqNum, ok);
+    reqNum = read(filename, 0, 100, buf);
+    res = awaitIO(reqNum, ok);
     bool secondOk = strCmp(res, "Hello, world!") == 0;
 
     return firstOk && secondOk;
@@ -54,6 +56,6 @@ void main() {
 	
 	int op = int(gl_GlobalInvocationID.x) * 1024;
 
-    outputs[op++] = testRead();
-    outputs[op++] = testWrite();
+    outputs[op++] = testRead() ? 1 : -1;
+    outputs[op++] = testWrite() ? 1 : -1;
 }

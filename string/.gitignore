@@ -1,3 +1,4 @@
 *.swp
-vulkanRunner
-out.comp
+test_file
+test_string
+*.comp

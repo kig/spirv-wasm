@@ -27,15 +27,15 @@ int write(string filename, int offset, int count, string buf) {
     return requestIO(ioRequest(IO_WRITE, filename, offset, min(count, strLen(buf)), buf, IO_START));
 }
 
-int truncate(string filename, int count) {
+int truncateFile(string filename, int count) {
     return requestIO(ioRequest(IO_TRUNCATE, filename, 0, count, string(0,0), IO_START));
 }
 
-int delete(string filename) {
+int deleteFile(string filename) {
     return requestIO(ioRequest(IO_DELETE, filename, 0, 0, string(0,0), IO_START));
 }
 
-int create(string filename) {
+int createFile(string filename) {
     return requestIO(ioRequest(IO_CREATE, filename, 0, 0, string(0,0), IO_START));
 }
 
