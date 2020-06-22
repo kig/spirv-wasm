@@ -644,7 +644,7 @@ class ComputeApplication
         createAndAllocateBuffer(&inputBuffer, inputBufferSize, &inputBufferMemory, VK_MEMORY_PROPERTY_HOST_CACHED_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
         createAndAllocateBuffer(&heapBuffer, heapBufferSize, &heapBufferMemory, VK_MEMORY_PROPERTY_HOST_CACHED_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
         createAndAllocateBuffer(&i32heapBuffer, 4*heapBufferSize, &i32heapBufferMemory, VK_MEMORY_PROPERTY_HOST_CACHED_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
-        createAndAllocateBuffer(&ioBuffer, ioBufferSize, &ioBufferMemory, VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
+        createAndAllocateBuffer(&ioBuffer, ioBufferSize, &ioBufferMemory, VK_MEMORY_PROPERTY_HOST_CACHED_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
     }
 
     void createDescriptorSetLayout()
@@ -1049,9 +1049,11 @@ void handleIORequest(ComputeApplication *app, ioRequests *ioReqs, char *heapBuf,
         printf("Result:\n%s\n", heapBuf + req.result_start);
         app->writeHeapToGPU(req.result_start, bytes);
         ioReqs->requests[i].result_end = req.result_start + bytes;
-        // ioReqs->requests[i].status = IO_COMPLETE;
-        ((int32_t*)ioReqs)[8 + i * 8 + 1] = IO_COMPLETE;
+        ioReqs->requests[i].status = IO_COMPLETE;
+        ioReqs->requests[i+1024].result_end = req.result_start + bytes;
+        ioReqs->requests[i+1024].status = IO_COMPLETE;
         app->writeIOToGPU((8 + i * 8) * 4, 8 * 4);
+        app->writeIOToGPU((8 + (i+1024) * 8) * 4, 8 * 4);
         printf("IO completed: %d - status %d\n", i, ioReqs->requests[i].status);
     } else if (req.ioType == IO_WRITE) {
         ioReqs->requests[i].status = IO_IN_PROGRESS;
@@ -1061,6 +1063,11 @@ void handleIORequest(ComputeApplication *app, ioRequests *ioReqs, char *heapBuf,
         fclose(fd);
         ioReqs->requests[i].result_end = req.result_start + bytes;
         ioReqs->requests[i].status = IO_COMPLETE;
+        ioReqs->requests[i+1024].result_end = req.result_start + bytes;
+        ioReqs->requests[i+1024].status = IO_COMPLETE;
+        app->writeIOToGPU((8 + i * 8) * 4, 8 * 4);
+        app->writeIOToGPU((8 + (i+1024) * 8) * 4, 8 * 4);
+        printf("IO completed: %d - status %d\n", i, ioReqs->requests[i].status);
     } else if (req.ioType == IO_CREATE) {
         ioReqs->requests[i].status = IO_IN_PROGRESS;
         FILE *fd = fopen(filename, "w");
@@ -1083,6 +1090,7 @@ void handleIORequests(ComputeApplication *app, ioRequests *ioReqs, char *heapBuf
     int32_t lastReqNum = 0;
     printf("IO Running\n");
     while (*ioRunning) {
+        app->readIOFromGPU(0, 8 * 4);
         int32_t reqNum = ioReqs->count;
         for (int32_t i = lastReqNum; i < reqNum; i++) {
 		    printf("Got IO request %d\n", i);

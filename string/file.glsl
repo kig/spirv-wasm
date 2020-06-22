@@ -49,11 +49,18 @@ int createFile(string filename) {
 }
 
 string awaitIO(int reqNum, inout int status) {
+	int cmd = 0;
     if (ioRequests[8 + reqNum * 8 + 1] != IO_NONE) {
-        for  (int i = 0; i < 100000; i++) ioRequests[7]++;
-        //while (ioRequests[8 + reqNum * 8 + 1] < IO_COMPLETE);
-        status = ioRequests[8 + reqNum * 8 + 1];
+        // for (int i = 0; i < 8192; i++) ioRequests[7]++;
+        int32_t s = ioRequests[8 + reqNum * 8 + 1];
+        for (int i = 0; i < 8192 && s < IO_COMPLETE; i++) {
+            memoryBarrier(gl_ScopeDevice, gl_StorageSemanticsBuffer | gl_StorageSemanticsOutput, gl_SemanticsAcquireRelease | gl_SemanticsMakeVisible | gl_SemanticsMakeAvailable);
+            s = ioRequests[8 + reqNum * 8 + 1];
+        }
+        while (s < IO_COMPLETE) s = ioRequests[8 + (reqNum+1024) * 8 + 1];
+        status = s;
     }
     ioRequests[8 + reqNum * 8 + 1] = IO_HANDLED;
-    return string(ioRequests[8 + reqNum * 8 + 6], ioRequests[8 + reqNum * 8 + 7]);
+    string s = string(ioRequests[8 + reqNum * 8 + 6], ioRequests[8 + (reqNum+1024) * 8 + 7]);
+    return s;
 }

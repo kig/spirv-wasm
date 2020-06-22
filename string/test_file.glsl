@@ -3,6 +3,7 @@
 
 version 450
 extension GL_EXT_shader_explicit_arithmetic_types : require
+extension GL_KHR_memory_scope_semantics : require
 
 #define HEAP_SIZE 8192
 
@@ -21,7 +22,7 @@ layout(std430, binding = 0) buffer inputBuffer { int32_t inputs[]; };
 layout(std430, binding = 1) buffer outputBuffer { int32_t outputs[]; };
 layout(std430, binding = 2) buffer heapBuffer { int8_t heap[]; };
 layout(std430, binding = 3) buffer i32heapBuffer { int32_t i32heap[]; };
-layout(std430, binding = 4) coherent volatile buffer ioBuffer { int32_t ioRequests[]; };
+layout(std430, binding = 4) buffer ioBuffer { int32_t ioRequests[]; };
 
 #include "file.glsl"
 
@@ -45,6 +46,7 @@ bool testWrite() {
     res = awaitIO(reqNum, ok);
     bool firstOk = strCmp(res, "Hello, write!") == 0;
 
+    buf = malloc(100);
     reqNum = write(filename, 0, 100, "Hello, world!");
     awaitIO(reqNum, ok);
     reqNum = read(filename, 0, 100, buf);
