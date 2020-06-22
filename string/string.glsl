@@ -2,11 +2,14 @@
 
 #define stringArray ivec2
 #define string ivec2
+#define char int8_t
 
 int heapStart = int(gl_GlobalInvocationID.x) * HEAP_SIZE;
 int heapEnd = heapStart + HEAP_SIZE;
 
 int heapPtr = heapStart;
+
+int i32heapPtr = heapStart;
 
 int strLen(ivec2 str) {
 	return str.y - str.x;
@@ -18,11 +21,11 @@ string malloc(int len) {
 	return string(ptr, heapPtr);
 }
 
-int getC(string s, int index) {
+char getC(string s, int index) {
 	return heap[s.x + index];
 }
 
-void setC(string s, int index, int value) {
+void setC(string s, int index, char value) {
 	heap[s.x + index] = value;
 }
 
@@ -38,16 +41,16 @@ string clone(string s) {
 	return c;
 }
 
-bool isWhitespace(int c) {
+bool isWhitespace(char c) {
 	return (c == CHR_SPACE || c == CHR_TAB || c == CHR_LF || c == CHR_CR);
 }
 
-int lowercase(int c) {
-	return c + ((c >= CHR_A && c <= CHR_Z) ? (CHR_a - CHR_A) : 0);
+char lowercase(char c) {
+	return c + char((c >= CHR_A && c <= CHR_Z) ? (CHR_a - CHR_A) : 0);
 }
 
-int uppercase(int c) {
-	return c + ((c >= CHR_a && c <= CHR_z) ? (CHR_A - CHR_a) : 0);
+char uppercase(char c) {
+	return c + char((c >= CHR_a && c <= CHR_z) ? (CHR_A - CHR_a) : 0);
 }
 
 string lowercase(string s) {
@@ -67,8 +70,8 @@ string uppercase(string s) {
 string capitalize(string s) {
 	bool afterSpace = true;
 	for (int i = s.x; i < s.y; i++) {
-		int c = heap[i];
-		c += (afterSpace && c >= CHR_a && c <= CHR_z) ? (CHR_A - CHR_a) : 0;
+		char c = heap[i];
+		c += char((afterSpace && c >= CHR_a && c <= CHR_z) ? (CHR_A - CHR_a) : 0);
 		heap[i] = c;
 		afterSpace = (c == ' ' || c == '\t' || c == '\r' || c == '\n');
 	}
@@ -77,7 +80,7 @@ string capitalize(string s) {
 
 string reverse(string s) {
 	for (int i = s.x, j = s.y-1; i < j; i++, j--) {
-		int tmp = heap[i];
+		char tmp = heap[i];
 		heap[i] = heap[j];
 		heap[j] = tmp;
 	}
@@ -86,7 +89,7 @@ string reverse(string s) {
 
 int strCmp(string a, string b) {
 	for (int i = a.x, j = b.x; i < a.y && j < b.y; i++, j++) {
-		int d = heap[i] - heap[j];
+		char d = heap[i] - heap[j];
 		if (d != 0) return d;
 	}
 	return strLen(a) - strLen(b);
@@ -94,7 +97,7 @@ int strCmp(string a, string b) {
 
 int strCmpI(string a, string b) {
 	for (int i = a.x, j = b.x; i < a.y && j < b.y; i++, j++) {
-		int d = lowercase(heap[i]) - lowercase(heap[j]);
+		char d = lowercase(heap[i]) - lowercase(heap[j]);
 		if (d != 0) return d;
 	}
 	return strLen(a) - strLen(b);
@@ -107,14 +110,14 @@ string concat(string a, string b) {
 	return c;
 }
 
-int indexOf(string s, int c) {
+int indexOf(string s, char c) {
 	for (int i = s.x; i < s.y; i++) {
 		if (heap[i] == c) return i - s.x;
 	}
 	return -1;
 }
 
-int indexOfI(string s, int c) {
+int indexOfI(string s, char c) {
 	int lc = lowercase(c);
 	for (int i = s.x; i < s.y; i++) {
 		if (lowercase(heap[i]) == lc) return i - s.x;
@@ -150,7 +153,7 @@ int indexOfI(string s, string key) {
 	return -1;
 }
 
-int lastIndexOf(string s, int c) {
+int lastIndexOf(string s, char c) {
 	for (int i = s.y-1; i >= s.x; i--) {
 		if (heap[i] == c) return i - s.x;
 	}
@@ -169,7 +172,7 @@ int lastIndexOf(string s, string key) {
 	return -1;
 }
 
-int lastIndexOfI(string s, int c) {
+int lastIndexOfI(string s, char c) {
 	int lc = lowercase(c);
 	for (int i = s.y-1; i >= s.x; i--) {
 		if (lowercase(heap[i]) == lc) return i - s.x;
@@ -206,7 +209,7 @@ string slice(string s, int start) {
 	return string(s.x + start, s.y);
 }
 
-ivec4 splitOnce(string s, int separator) {
+ivec4 splitOnce(string s, char separator) {
 	int idx = indexOf(s, separator);
 	ivec4 pair;
 	if (idx < 0) idx = s.y - s.x;
@@ -224,35 +227,35 @@ ivec4 splitOnce(string s, string separator) {
 	return pair;
 }
 
-stringArray split(string s, int separator) {
-	int start = heapPtr;
+stringArray split(string s, char separator) {
+	int start = i32heapPtr;
 	string rest = s;
 	while (strLen(rest) >= 0) {
 		ivec4 pair = splitOnce(rest, separator);
 		rest = pair.zw;
-		heap[heapPtr++] = pair.x;
-		heap[heapPtr++] = pair.y;
+		i32heap[i32heapPtr++] = pair.x;
+		i32heap[i32heapPtr++] = pair.y;
 	}
-	return stringArray(start, heapPtr);
+	return stringArray(start, i32heapPtr);
 }
 
 stringArray split(string s, string separator) {
-	int start = heapPtr;
+	int start = i32heapPtr;
 	string rest = s;
 	while (strLen(rest) >= 0) {
 		ivec4 pair = splitOnce(rest, separator);
 		rest = pair.zw;
-		heap[heapPtr++] = pair.x;
-		heap[heapPtr++] = pair.y;
+		i32heap[i32heapPtr++] = pair.x;
+		i32heap[i32heapPtr++] = pair.y;
 	}
-	return stringArray(start, heapPtr);
+	return stringArray(start, i32heapPtr);
 }
 
 string join(stringArray a, string joiner) {
 	int start = heapPtr;
 	int joinerLen = strLen(joiner);
 	for (int i = a.x; i < a.y-2; i += 2) {
-		string str = string(heap[i], heap[i+1]);
+		string str = string(i32heap[i], i32heap[i+1]);
 		int len = strLen(str);
 		strCopy(string(heapPtr, heapPtr+len), str);
 		heapPtr += len;
@@ -261,7 +264,7 @@ string join(stringArray a, string joiner) {
 		heapPtr += len;
 	}
 	if (a.y > a.x) {
-		string str = string(heap[a.y-2], heap[a.y-1]);
+		string str = string(i32heap[a.y-2], i32heap[a.y-1]);
 		int len = strLen(str);
 		strCopy(string(heapPtr, heapPtr+len), str);
 		heapPtr += len;
@@ -269,10 +272,10 @@ string join(stringArray a, string joiner) {
 	return string(start, heapPtr);
 }
 
-string join(stringArray a, int joiner) {
+string join(stringArray a, char joiner) {
 	int start = heapPtr;
 	for (int i = a.x; i < a.y-2; i += 2) {
-		string str = string(heap[i], heap[i+1]);
+		string str = string(i32heap[i], i32heap[i+1]);
 		int len = strLen(str);
 		strCopy(string(heapPtr, heapPtr+len), str);
 		heapPtr += len;
@@ -280,7 +283,7 @@ string join(stringArray a, int joiner) {
 		heapPtr += 1;
 	}
 	if (a.y > a.x) {
-		string str = string(heap[a.y-2], heap[a.y-1]);
+		string str = string(i32heap[a.y-2], i32heap[a.y-1]);
 		int len = strLen(str);
 		strCopy(string(heapPtr, heapPtr+len), str);
 		heapPtr += len;
@@ -302,7 +305,7 @@ string join(ivec4 pair, string joiner) {
 	return s;
 }
 
-string join(ivec4 pair, int joiner) {
+string join(ivec4 pair, char joiner) {
 	int zwLen = strLen(pair.zw);
 	if (zwLen < 0) {
 		return pair.xy;
@@ -333,11 +336,11 @@ string replace(string s, string pattern, string replacement) {
 	return moved;
 }
 
-string repeat(int char, int count) {
+string repeat(char c, int count) {
 	count = max(0, count);
 	string s = malloc(count);
 	for (int i = s.x; i < s.y; i++) {
-		heap[i] = char;
+		heap[i] = c;
 	}
 	return s;
 }
@@ -352,7 +355,7 @@ string repeat(string pattern, int count) {
 	return s;
 } 
 
-string padStart(string s, int len, int filler) {
+string padStart(string s, int len, char filler) {
 	len = max(0, len);
 	int slen = max(0, strLen(s));
 	int diff = len - slen;
@@ -364,7 +367,7 @@ string padStart(string s, int len, int filler) {
 	return res;
 }
 
-string padEnd(string s, int len, int filler) {
+string padEnd(string s, int len, char filler) {
 	len = max(0, len);
 	int slen = max(0, strLen(s));
 	int diff = len - slen;
@@ -400,7 +403,7 @@ bool includes(string s, string key) {
 
 string trimStart(string s) {
 	for (int i = s.x; i < s.y; i++) {
-		int c = heap[i];
+		char c = heap[i];
 		if (isWhitespace(c)) {
 			s.x++;
 		} else {
@@ -412,7 +415,7 @@ string trimStart(string s) {
 
 string trimEnd(string s) {
 	for (int i = s.y-1; i >= s.x; i--) {
-		int c = heap[i];
+		char c = heap[i];
 		if (isWhitespace(c)) {
 			s.y--;
 		} else {

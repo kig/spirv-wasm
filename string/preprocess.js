@@ -23,7 +23,7 @@ for (segment of segments) {
 			const len = buf.length;
 			const v = `_global_${globals.length}_`;
 			const assigns = [];
-			for (let i = 0; i < len; i++) assigns.push(`setC(${v}, ${i}, ${buf[i]})`);
+			for (let i = 0; i < len; i++) assigns.push(`setC(${v}, ${i}, int8_t(${buf[i]}))`);
 			output.push(v);
 			globals.push(`ivec2 ${v} = malloc(${len});`);
 			init.push(`${assigns.join(';')};`);
@@ -38,7 +38,7 @@ for (segment of segments) {
 			if (str.length == 4) {
 				output.push(`${Buffer.from(str).readInt32LE(0)}`);
 			} else if (str.length == 1) {
-				output.push(`${Buffer.from(str)[0]}`);
+				output.push(`int8_t(${Buffer.from(str)[0]})`);
 			}
 		}
 		stringSegments = [];
