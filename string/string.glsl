@@ -103,6 +103,14 @@ int strCmpI(string a, string b) {
 	return strLen(a) - strLen(b);
 }
 
+bool strEq(string a, string b) {
+	return strCmp(a, b) == 0;
+}
+
+bool strEqI(string a, string b) {
+	return strCmpI(a, b) == 0;
+}
+
 string concat(string a, string b) {
 	string c = malloc(strLen(a) + strLen(b));
 	strCopy(c, a);
