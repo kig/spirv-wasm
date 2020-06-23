@@ -143,7 +143,7 @@ class ComputeApplication
     VkBuffer inputBuffer;
     VkDeviceMemory inputBufferMemory;
 
-	// Internal buffers for the device.
+    // Internal buffers for the device.
     VkBuffer heapBuffer;
     VkDeviceMemory heapBufferMemory;
 
@@ -292,7 +292,7 @@ class ComputeApplication
 
     void writeIOToGPU(VkDeviceSize offset, VkDeviceSize size)
     {
-    	printf("Write IO to GPU: %lu %lu\n", offset, size);
+//        printf("Write IO to GPU: %lu %lu\n", offset, size);
         VkMappedMemoryRange bufferMemoryRange = {
             .sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
             .pNext = NULL,
@@ -304,7 +304,7 @@ class ComputeApplication
 
     void readIOFromGPU(VkDeviceSize offset, VkDeviceSize size)
     {
-    	//printf("Read IO from GPU: %lu %lu\n", offset, size);
+//        printf("Read IO from GPU: %lu %lu\n", offset, size);
         VkMappedMemoryRange bufferMemoryRange = {
             .sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
             .pNext = NULL,
@@ -316,7 +316,7 @@ class ComputeApplication
 
     void writeHeapToGPU(VkDeviceSize offset, VkDeviceSize size)
     {
-    	printf("Write heap to GPU: %lu %lu\n", offset, size);
+//        printf("Write heap to GPU: %lu %lu\n", offset, size);
         VkMappedMemoryRange heapBufferMemoryRange = {
             .sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
             .pNext = NULL,
@@ -328,7 +328,7 @@ class ComputeApplication
 
     void readHeapFromGPU(VkDeviceSize offset, VkDeviceSize size)
     {
-    	printf("Read heap from GPU: %lu %lu\n", offset, size);
+//        printf("Read heap from GPU: %lu %lu\n", offset, size);
         VkMappedMemoryRange heapBufferMemoryRange = {
             .sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
             .pNext = NULL,
@@ -1063,42 +1063,63 @@ class ComputeApplication
     }
 };
 
+FILE* openFile(char *filename, FILE* file, const char *mode) {
+    if (file != NULL) return file;
+    return fopen(filename, mode);
+}
+
 void handleIORequest(ComputeApplication *app, ioRequests *ioReqs, char *heapBuf, int i) {
     ioRequest req = ioReqs->requests[i];
-    printf("IO req %d: %d %d %d %d %d %d %d %d\n", i, req.ioType, req.filename_start, req.filename_end, req.offset, req.count, req.result_start, req.result_end, req.status);
-    VkDeviceSize filenameLength = req.filename_end - req.filename_start;
-   	printf("Filename length %lu\n", filenameLength);
-    char* filename = (char*)malloc(filenameLength + 1);
-    app->readHeapFromGPU(req.filename_start, filenameLength);
-    memcpy(filename, heapBuf + req.filename_start, filenameLength);
-    filename[filenameLength] = 0;
+    //printf("IO req %d: %d %d %d %d %d %d %d %d\n", i, req.ioType, req.filename_start, req.filename_end, req.offset, req.count, req.result_start, req.result_end, req.status);
+    char *filename = NULL;
+    FILE *file = NULL;
+    if (req.filename_end == 0) {
+        if (req.filename_start == 0) {
+            file = stdin;
+        } else if (req.filename_start == 1) {
+            file = stdout;
+        } else if (req.filename_start == 2) {
+            file = stderr;
+        }
+    } else {
+        VkDeviceSize filenameLength = req.filename_end - req.filename_start;
+        //printf("Filename length %lu\n", filenameLength);
+        filename = (char*)malloc(filenameLength + 1);
+        app->readHeapFromGPU(req.filename_start, filenameLength);
+        memcpy(filename, heapBuf + req.filename_start, filenameLength);
+        filename[filenameLength] = 0;
+    }
     if (req.ioType == IO_READ) {
-    	printf("Read %s\n", filename);
+        //printf("Read %s\n", filename);
         ioReqs->requests[i].status = IO_IN_PROGRESS;
-        FILE *fd = fopen(filename, "r");
+        FILE *fd = openFile(filename, file, "r");
         fseek(fd, req.offset, SEEK_SET);
         int32_t bytes = fread(heapBuf + req.result_start, 1, req.count, fd);
-        fclose(fd);
-        printf("Result:\n%s\n", heapBuf + req.result_start);
+        if (file == NULL) fclose(fd);
+        //printf("Result:\n%s\n", heapBuf + req.result_start);
         app->writeHeapToGPU(req.result_start, bytes);
         ioReqs->requests[i].result_end = req.result_start + bytes;
         ioReqs->requests[i].status = IO_COMPLETE;
         app->writeIOToGPU((8 + i * 8) * 4, 8 * 4);
-        printf("IO completed: %d - status %d\n", i, ioReqs->requests[i].status);
+        //printf("IO completed: %d - status %d\n", i, ioReqs->requests[i].status);
     } else if (req.ioType == IO_WRITE) {
         ioReqs->requests[i].status = IO_IN_PROGRESS;
-        FILE *fd = fopen(filename, "r+");
-        fseek(fd, req.offset, SEEK_SET);
+        FILE *fd = openFile(filename, file, "r+");
+        if (req.offset < 0) {
+            fseek(fd, -1-req.offset, SEEK_END);
+        } else {
+            fseek(fd, req.offset, SEEK_SET);
+        }
         int bytes = fwrite(heapBuf + req.result_start, 1, req.count, fd);
-        fclose(fd);
+        if (file == NULL) fclose(fd);
         ioReqs->requests[i].result_end = req.result_start + bytes;
         ioReqs->requests[i].status = IO_COMPLETE;
         app->writeIOToGPU((8 + i * 8) * 4, 8 * 4);
-        printf("IO completed: %d - status %d\n", i, ioReqs->requests[i].status);
+        //printf("IO completed: %d - status %d\n", i, ioReqs->requests[i].status);
     } else if (req.ioType == IO_CREATE) {
         ioReqs->requests[i].status = IO_IN_PROGRESS;
-        FILE *fd = fopen(filename, "w");
-        fclose(fd);
+        FILE *fd = openFile(filename, file, "w");
+        if (file == NULL) fclose(fd);
         ioReqs->requests[i].status = IO_COMPLETE;
     } else if (req.ioType == IO_DELETE) {
         ioReqs->requests[i].status = IO_IN_PROGRESS;
@@ -1115,25 +1136,25 @@ void handleIORequest(ComputeApplication *app, ioRequests *ioReqs, char *heapBuf,
 
 void handleIORequests(ComputeApplication *app, ioRequests *ioReqs, char *heapBuf, volatile bool *ioRunning) {
     int32_t lastReqNum = 0;
-    printf("IO Running\n");
+    //printf("IO Running\n");
     while (*ioRunning) {
         app->readIOFromGPU(0, 8 * 4);
         int32_t reqNum = ioReqs->count;
         for (int32_t i = lastReqNum; i < reqNum; i++) {
-		    printf("Got IO request %d\n", i);
+            //printf("Got IO request %d\n", i);
             handleIORequest(app, ioReqs, heapBuf, i);
         }
         lastReqNum = reqNum;
         for (int32_t i = 0; i < reqNum; i++) {
-        	if (ioReqs->requests[i].status == IO_HANDLED) {
-		        printf("GPU got IO: %d - status %d\n", i, ioReqs->requests[i].status);
-        		ioReqs->requests[i].status = IO_NONE;
-        	} else if (ioReqs->requests[i].status == IO_COMPLETE) {
-	            app->readIOFromGPU((8 + i * 8) * 4, 8 * 4);
-        	}
+            if (ioReqs->requests[i].status == IO_HANDLED) {
+                //printf("GPU got IO: %d - status %d\n", i, ioReqs->requests[i].status);
+                ioReqs->requests[i].status = IO_NONE;
+            } else if (ioReqs->requests[i].status == IO_COMPLETE) {
+                app->readIOFromGPU((8 + i * 8) * 4, 8 * 4);
+            }
         }
     }
-    printf("Exited IO thread\n");
+    //printf("Exited IO thread\n");
 }
 
 

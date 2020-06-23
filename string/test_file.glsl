@@ -27,37 +27,44 @@ layout(std430, binding = 4) volatile buffer ioBuffer { int32_t ioRequests[]; };
 #include "file.glsl"
 
 bool testRead() {
+    bool okShort = strCmp(readSync("hello.txt", malloc(100)), "Hello, world!") == 0;
+
     string buf = malloc(100);
     int ok;
     int reqNum = read("hello.txt", 0, 100, buf);
     string res = awaitIO(reqNum, ok);
-    return strCmp(res, "Hello, world!") == 0;
+    bool okLong = strCmp(res, "Hello, world!") == 0;
+
+    return okShort && okLong;
 }
 
 bool testWrite() {
     string buf = malloc(100);
     string filename = "write.txt";
-    string res;
-    int ok, reqNum;
 
-    awaitIO(write(filename, 0, 100, "Hello, write!"), ok);
-    bool firstOk = strCmp(awaitIO(read(filename, 0, 100, buf), ok), "Hello, write!") == 0;
+    awaitIO(write(filename, 0, 100, "Hello, write!"));
+    bool firstOk = strCmp(awaitIO(read(filename, 0, 100, buf)), "Hello, write!") == 0;
 
-    reqNum = write(filename, 0, 100, "Hello, world!");
-    awaitIO(reqNum, ok);
-    reqNum = read(filename, 0, 100, buf);
-    res = awaitIO(reqNum, ok);
-    bool secondOk = strCmp(res, "Hello, world!") == 0;
+    writeSync(filename, "Hello, world!");
+    bool secondOk = strCmp(readSync(filename, buf), "Hello, world!") == 0;
 
     return firstOk && secondOk;
 }
 
+void printTest(bool ok, string name) {
+    print(name);
+    println(ok ? " successful" : " failed!");
+}
+
+#define TEST(testFn) printTest(testFn(), #testFn)
+
 void main() {
     initGlobals();
-    int heapTop = heapPtr;
 
-    int op = int(gl_GlobalInvocationID.x) * 1024;
+    if (strCmp(readSync("hello.txt", malloc(100)), "Hello, world!") == 0) {
+        println("Read test successful!");
+    }
 
-    outputs[op++] = testRead() ? 1 : -1;
-    outputs[op++] = testWrite() ? 1 : -1;
+    TEST(testRead);
+    TEST(testWrite);
 }

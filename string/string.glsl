@@ -57,14 +57,14 @@ string lowercase(string s) {
 	for (int i = s.x; i < s.y; i++) {
 		heap[i] = lowercase(heap[i]);
 	}
-	return s;	
+	return s;
 }
 
 string uppercase(string s) {
 	for (int i = s.x; i < s.y; i++) {
 		heap[i] = uppercase(heap[i]);
 	}
-	return s;	
+	return s;
 }
 
 string capitalize(string s) {
@@ -75,7 +75,7 @@ string capitalize(string s) {
 		heap[i] = c;
 		afterSpace = (c == ' ' || c == '\t' || c == '\r' || c == '\n');
 	}
-	return s;	
+	return s;
 }
 
 string reverse(string s) {
@@ -84,7 +84,7 @@ string reverse(string s) {
 		heap[i] = heap[j];
 		heap[j] = tmp;
 	}
-	return s;	
+	return s;
 }
 
 int strCmp(string a, string b) {

@@ -14,6 +14,12 @@
 #define IO_ERROR 5
 #define IO_HANDLED 255
 
+const string stdin = string(0, 0);
+const string stdout = string(1, 0);
+const string stderr = string(2, 0);
+
+int errno = 0;
+
 int requestIO(ioRequest req) {
     int32_t reqNum = atomicAdd(ioRequests[0], 1);
     int32_t off = 8 + reqNum * 8;
@@ -28,12 +34,35 @@ int requestIO(ioRequest req) {
     return reqNum;
 }
 
+string awaitIO(int reqNum, inout int status) {
+    if (ioRequests[8 + reqNum * 8 + 1] != IO_NONE) {
+        while (ioRequests[8 + reqNum * 8 + 1] < IO_COMPLETE);
+        status = ioRequests[8 + reqNum * 8 + 1];
+    }
+    ioRequests[8 + reqNum * 8 + 1] = IO_HANDLED;
+    string s = string(ioRequests[8 + reqNum * 8 + 6], ioRequests[8 + reqNum * 8 + 7]);
+    memoryBarrier(gl_ScopeDevice, gl_StorageSemanticsBuffer, gl_SemanticsAcquireRelease);
+    return s;
+}
+
+string awaitIO(int reqNum) {
+    return awaitIO(reqNum, errno);
+}
+
 int read(string filename, int offset, int count, string buf) {
     return requestIO(ioRequest(IO_READ, filename, offset, min(count, strLen(buf)), buf, IO_START));
 }
 
+int read(string filename, string buf) {
+    return read(filename, 0, strLen(buf), buf);
+}
+
 int write(string filename, int offset, int count, string buf) {
     return requestIO(ioRequest(IO_WRITE, filename, offset, min(count, strLen(buf)), buf, IO_START));
+}
+
+int write(string filename, string buf) {
+    return write(filename, 0, strLen(buf), buf);
 }
 
 int truncateFile(string filename, int count) {
@@ -48,13 +77,17 @@ int createFile(string filename) {
     return requestIO(ioRequest(IO_CREATE, filename, 0, 0, string(0,0), IO_START));
 }
 
-string awaitIO(int reqNum, inout int status) {
-    if (ioRequests[8 + reqNum * 8 + 1] != IO_NONE) {
-        while (ioRequests[8 + reqNum * 8 + 1] < IO_COMPLETE);
-        status = ioRequests[8 + reqNum * 8 + 1];
-    }
-    ioRequests[8 + reqNum * 8 + 1] = IO_HANDLED;
-    string s = string(ioRequests[8 + reqNum * 8 + 6], ioRequests[8 + reqNum * 8 + 7]);
-    memoryBarrierBuffer();
-    return s;
+string readSync(string filename, int offset, int count, string buf) { return awaitIO(read(filename, offset, count, buf)); }
+string readSync(string filename, string buf) { return awaitIO(read(filename, buf)); }
+
+string writeSync(string filename, int offset, int count, string buf) { return awaitIO(write(filename, offset, count, buf)); }
+string writeSync(string filename, string buf) { return awaitIO(write(filename, buf)); }
+
+void print(string message) {
+    awaitIO(write(stdout, -1, strLen(message), message));
+}
+
+void println(string message) {
+    print(message);
+    print("\n");
 }
