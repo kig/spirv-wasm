@@ -35,6 +35,28 @@ const bool enableValidationLayers = true;
         }                                                                                 \
     }
 
+template<typename MainT, typename NewT>
+inline void PnextChainPushFront(MainT* mainStruct, NewT* newStruct)
+{
+    newStruct->pNext = mainStruct->pNext;
+    mainStruct->pNext = newStruct;
+}
+template<typename MainT, typename NewT>
+inline void PnextChainPushBack(MainT* mainStruct, NewT* newStruct)
+{
+    struct VkAnyStruct
+    {
+        VkStructureType sType;
+        void* pNext;
+    };
+    VkAnyStruct* lastStruct = (VkAnyStruct*)mainStruct;
+    while(lastStruct->pNext != nullptr)
+    {
+        lastStruct = (VkAnyStruct*)lastStruct->pNext;
+    }
+    newStruct->pNext = nullptr;
+    lastStruct->pNext = newStruct;
+}
 
 #define IO_READ 1
 #define IO_WRITE 2
@@ -572,15 +594,26 @@ class ComputeApplication
             .queueCount = 1, // create one queue in this family. We don't need more.
             .pQueuePriorities = &queuePriorities};
 
-        VkPhysicalDeviceFeatures deviceFeatures = {};
+        //VkPhysicalDeviceFeatures deviceFeatures = {};
+        std::vector<const char*> extensions;
+        extensions.push_back(VK_AMD_DEVICE_COHERENT_MEMORY_EXTENSION_NAME);
+        // = {"VK_AMD_device_coherent_memory"};
+
+	    VkPhysicalDeviceFeatures2 deviceFeatures = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
+	    //VkPhysicalDeviceCoherentMemoryFeaturesAMD physicalDeviceCoherentMemoryFeatures = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COHERENT_MEMORY_FEATURES_AMD };
+        //physicalDeviceCoherentMemoryFeatures.deviceCoherentMemory = VK_TRUE;
+        //PnextChainPushBack(&deviceFeatures, &physicalDeviceCoherentMemoryFeatures);
 
         VkDeviceCreateInfo deviceCreateInfo = {
             .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
-            .enabledLayerCount = static_cast<uint32_t>(enabledLayers.size()),
-            .ppEnabledLayerNames = enabledLayers.data(),
+            .enabledLayerCount = 0, //static_cast<uint32_t>(enabledLayers.size()),
+            .ppEnabledLayerNames = nullptr, //enabledLayers.data(),
             .pQueueCreateInfos = &queueCreateInfo,
             .queueCreateInfoCount = 1,
-            .pEnabledFeatures = &deviceFeatures,
+            //.pEnabledFeatures = &deviceFeatures,
+            .pNext = &deviceFeatures,
+            //.enabledExtensionCount = (uint32_t)extensions.size(),
+            //.ppEnabledExtensionNames = extensions.data(),
         };
 
         VK_CHECK_RESULT(vkCreateDevice(physicalDevice, &deviceCreateInfo, NULL, &device)); // create logical device.
@@ -642,9 +675,9 @@ class ComputeApplication
         createAndAllocateBuffer(&buffer, bufferSize, &bufferMemory, VK_MEMORY_PROPERTY_HOST_CACHED_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
         createAndAllocateBuffer(&buffer2, bufferSize, &bufferMemory2, VK_MEMORY_PROPERTY_HOST_CACHED_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
         createAndAllocateBuffer(&inputBuffer, inputBufferSize, &inputBufferMemory, VK_MEMORY_PROPERTY_HOST_CACHED_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
-        createAndAllocateBuffer(&heapBuffer, heapBufferSize, &heapBufferMemory, VK_MEMORY_PROPERTY_HOST_CACHED_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
-        createAndAllocateBuffer(&i32heapBuffer, 4*heapBufferSize, &i32heapBufferMemory, VK_MEMORY_PROPERTY_HOST_CACHED_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
-        createAndAllocateBuffer(&ioBuffer, ioBufferSize, &ioBufferMemory, VK_MEMORY_PROPERTY_HOST_CACHED_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
+        createAndAllocateBuffer(&heapBuffer, heapBufferSize, &heapBufferMemory, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
+        createAndAllocateBuffer(&i32heapBuffer, 4*heapBufferSize, &i32heapBufferMemory, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
+        createAndAllocateBuffer(&ioBuffer, ioBufferSize, &ioBufferMemory, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
     }
 
     void createDescriptorSetLayout()
@@ -1050,10 +1083,7 @@ void handleIORequest(ComputeApplication *app, ioRequests *ioReqs, char *heapBuf,
         app->writeHeapToGPU(req.result_start, bytes);
         ioReqs->requests[i].result_end = req.result_start + bytes;
         ioReqs->requests[i].status = IO_COMPLETE;
-        ioReqs->requests[i+1024].result_end = req.result_start + bytes;
-        ioReqs->requests[i+1024].status = IO_COMPLETE;
         app->writeIOToGPU((8 + i * 8) * 4, 8 * 4);
-        app->writeIOToGPU((8 + (i+1024) * 8) * 4, 8 * 4);
         printf("IO completed: %d - status %d\n", i, ioReqs->requests[i].status);
     } else if (req.ioType == IO_WRITE) {
         ioReqs->requests[i].status = IO_IN_PROGRESS;
@@ -1063,10 +1093,7 @@ void handleIORequest(ComputeApplication *app, ioRequests *ioReqs, char *heapBuf,
         fclose(fd);
         ioReqs->requests[i].result_end = req.result_start + bytes;
         ioReqs->requests[i].status = IO_COMPLETE;
-        ioReqs->requests[i+1024].result_end = req.result_start + bytes;
-        ioReqs->requests[i+1024].status = IO_COMPLETE;
         app->writeIOToGPU((8 + i * 8) * 4, 8 * 4);
-        app->writeIOToGPU((8 + (i+1024) * 8) * 4, 8 * 4);
         printf("IO completed: %d - status %d\n", i, ioReqs->requests[i].status);
     } else if (req.ioType == IO_CREATE) {
         ioReqs->requests[i].status = IO_IN_PROGRESS;
