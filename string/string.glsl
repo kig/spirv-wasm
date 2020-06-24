@@ -118,6 +118,33 @@ string concat(string a, string b) {
 	return c;
 }
 
+string concat(string a, string b, string c) {
+	string r = malloc(strLen(a) + strLen(b) + strLen(c));
+	strCopy(r, a);
+	strCopy(r + ivec2(strLen(a), 0), b);
+	strCopy(r + ivec2(strLen(a)+strLen(b), 0), c);
+	return r;
+}
+
+string concat(string a, string b, string c, string d) {
+	string r = malloc(strLen(a) + strLen(b) + strLen(c) + strLen(d));
+	strCopy(r, a);
+	strCopy(r + ivec2(strLen(a), 0), b);
+	strCopy(r + ivec2(strLen(a)+strLen(b), 0), c);
+	strCopy(r + ivec2(strLen(a)+strLen(b)+strLen(c), 0), d);
+	return r;
+}
+
+string toString(uint i) {
+	int start = heapPtr;
+	if (i == 0) heap[heapPtr++] = char(CHR_0);
+	while (i > 0) {
+		heap[heapPtr++] = char(CHR_0 + (i % 10));
+		i /= 10;
+	}
+	return reverse(string(start, heapPtr));
+}
+
 int indexOf(string s, char c) {
 	for (int i = s.x; i < s.y; i++) {
 		if (heap[i] == c) return i - s.x;

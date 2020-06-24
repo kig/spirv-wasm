@@ -1,3 +1,29 @@
+#define version #version
+#define extension #extension
+
+version 450
+extension GL_EXT_shader_explicit_arithmetic_types : require
+extension GL_KHR_memory_scope_semantics : require
+
+#define HEAP_SIZE 8192
+
+struct ioRequest {
+    int ioType;
+    ivec2 filename;
+    int offset;
+    int count;
+    ivec2 result;
+    int status;
+};
+
+layout ( local_size_x = 16, local_size_y = 1, local_size_z = 1 ) in;
+
+layout(std430, binding = 0) buffer inputBuffer { int32_t inputs[]; };
+layout(std430, binding = 1) buffer outputBuffer { int32_t outputs[]; };
+layout(std430, binding = 2) volatile buffer heapBuffer { int8_t heap[]; };
+layout(std430, binding = 3) buffer i32heapBuffer { int32_t i32heap[]; };
+layout(std430, binding = 4) volatile buffer ioBuffer { int32_t ioRequests[]; };
+
 #include "string.glsl"
 
 #define IO_READ 1
@@ -41,7 +67,7 @@ string awaitIO(int reqNum, inout int status) {
     }
     ioRequests[8 + reqNum * 8 + 1] = IO_HANDLED;
     string s = string(ioRequests[8 + reqNum * 8 + 6], ioRequests[8 + reqNum * 8 + 7]);
-    memoryBarrier(gl_ScopeDevice, gl_StorageSemanticsBuffer, gl_SemanticsAcquireRelease);
+    //memoryBarrier(gl_ScopeDevice, gl_StorageSemanticsBuffer, gl_SemanticsAcquireRelease);
     return s;
 }
 
@@ -88,6 +114,5 @@ void print(string message) {
 }
 
 void println(string message) {
-    print(message);
-    print("\n");
+    print(concat(message, "\n"));
 }
