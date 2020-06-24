@@ -134,15 +134,6 @@ class ComputeApplication
     VkDescriptorSet descriptorSet;
     VkDescriptorSetLayout descriptorSetLayout;
 
-    VkBuffer buffer;
-    VkBuffer buffer2;
-
-    VkDeviceMemory bufferMemory;
-    VkDeviceMemory bufferMemory2;
-
-    VkBuffer inputBuffer;
-    VkDeviceMemory inputBufferMemory;
-
     // Internal buffers for the device.
     VkBuffer heapBuffer;
     VkDeviceMemory heapBufferMemory;
@@ -153,11 +144,13 @@ class ComputeApplication
     VkBuffer ioBuffer;
     VkDeviceMemory ioBufferMemory;
 
-    uint32_t bufferSize; // size of `buffer` in bytes.
-    uint32_t inputBufferSize; // size of `inputBuffer` in bytes.
+    VkBuffer ioBytesBuffer;
+    VkDeviceMemory ioBytesBufferMemory;
+
     uint32_t heapBufferSize; // size of `heapBuffer` in bytes.
     uint32_t i32heapBufferSize; // size of `i32heapBuffer` in bytes.
     uint32_t ioBufferSize; // size of `heapBuffer` in bytes.
+    uint32_t ioBytesBufferSize; // size of `heapBuffer` in bytes.
 
     std::vector<const char *> enabledLayers;
 
@@ -165,11 +158,8 @@ class ComputeApplication
 
     VkFence fence;
 
-    void *mappedInputMemory = NULL;
-    void *mappedHeapMemory = NULL;
     void *mappedIoMemory = NULL;
-    void *mappedOutputMemory = NULL;
-    void *mappedOutputMemory2 = NULL;
+    void *mappedIoBytesMemory = NULL;
 
     uint32_t queueFamilyIndex;
 
@@ -198,10 +188,9 @@ class ComputeApplication
         _setmode(_fileno(stdin), _O_BINARY);
 #endif
 
-        inputBufferSize = maxRequestSize * requestCount;
-        bufferSize = maxResponseSize * requestCount;
         heapBufferSize = heapSize * requestCount;
         ioBufferSize = ioSize;
+        ioBytesBufferSize = heapBufferSize;
 
         // Initialize vulkan:
         createInstance();
@@ -223,7 +212,7 @@ class ComputeApplication
         bool firstFrame = true;
         bool ioRunning = true;
 
-        char *heapBuf = (char *)mappedHeapMemory;
+        char *heapBuf = (char *)mappedIoBytesMemory;
         ioRequests *ioReqs = (ioRequests *)mappedIoMemory;
 
         std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
@@ -249,20 +238,14 @@ class ComputeApplication
 
     void mapMemory()
     {
-        // Map the buffer memory, so that we can read from it on the CPU.
-        vkMapMemory(device, inputBufferMemory, 0, inputBufferSize, 0, &mappedInputMemory);
-        vkMapMemory(device, heapBufferMemory, 0, heapBufferSize, 0, &mappedHeapMemory);
         vkMapMemory(device, ioBufferMemory, 0, ioBufferSize, 0, &mappedIoMemory);
-        vkMapMemory(device, bufferMemory, 0, bufferSize, 0, &mappedOutputMemory);
+        vkMapMemory(device, ioBytesBufferMemory, 0, ioBytesBufferSize, 0, &mappedIoBytesMemory);
     }
 
     void unmapMemory()
     {
-        vkUnmapMemory(device, inputBufferMemory);
-        vkUnmapMemory(device, heapBufferMemory);
         vkUnmapMemory(device, ioBufferMemory);
-        vkUnmapMemory(device, bufferMemory);
-        vkUnmapMemory(device, bufferMemory2);
+        vkUnmapMemory(device, ioBytesBufferMemory);
     }
 
 
@@ -293,25 +276,25 @@ class ComputeApplication
     void writeHeapToGPU(VkDeviceSize offset, VkDeviceSize size)
     {
 //        printf("Write heap to GPU: %lu %lu\n", offset, size);
-        VkMappedMemoryRange heapBufferMemoryRange = {
+        VkMappedMemoryRange ioBytesBufferMemoryRange = {
             .sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
             .pNext = NULL,
-            .memory = heapBufferMemory,
+            .memory = ioBytesBufferMemory,
             .offset = offset,
             .size = size};
-        vkFlushMappedMemoryRanges(device, 1, &heapBufferMemoryRange);
+        vkFlushMappedMemoryRanges(device, 1, &ioBytesBufferMemoryRange);
     }
 
     void readHeapFromGPU(VkDeviceSize offset, VkDeviceSize size)
     {
 //        printf("Read heap from GPU: %lu %lu\n", offset, size);
-        VkMappedMemoryRange heapBufferMemoryRange = {
+        VkMappedMemoryRange ioBytesBufferMemoryRange = {
             .sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
             .pNext = NULL,
-            .memory = heapBufferMemory,
+            .memory = ioBytesBufferMemory,
             .offset = offset,
             .size = size};
-        vkInvalidateMappedMemoryRanges(device, 1, &heapBufferMemoryRange);
+        vkInvalidateMappedMemoryRanges(device, 1, &ioBytesBufferMemoryRange);
     }
 
     static VKAPI_ATTR VkBool32 VKAPI_CALL debugReportCallbackFn(
@@ -504,12 +487,8 @@ class ComputeApplication
         //VkPhysicalDeviceFeatures deviceFeatures = {};
         std::vector<const char*> extensions;
         extensions.push_back(VK_AMD_DEVICE_COHERENT_MEMORY_EXTENSION_NAME);
-        // = {"VK_AMD_device_coherent_memory"};
 
-	    VkPhysicalDeviceFeatures2 deviceFeatures = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
-	    //VkPhysicalDeviceCoherentMemoryFeaturesAMD physicalDeviceCoherentMemoryFeatures = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COHERENT_MEMORY_FEATURES_AMD };
-        //physicalDeviceCoherentMemoryFeatures.deviceCoherentMemory = VK_TRUE;
-        //PnextChainPushBack(&deviceFeatures, &physicalDeviceCoherentMemoryFeatures);
+        VkPhysicalDeviceFeatures2 deviceFeatures = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
 
         VkDeviceCreateInfo deviceCreateInfo = {
             .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
@@ -579,17 +558,15 @@ class ComputeApplication
 
     void createBuffer()
     {
-        createAndAllocateBuffer(&buffer, bufferSize, &bufferMemory, VK_MEMORY_PROPERTY_HOST_CACHED_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
-        createAndAllocateBuffer(&buffer2, bufferSize, &bufferMemory2, VK_MEMORY_PROPERTY_HOST_CACHED_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
-        createAndAllocateBuffer(&inputBuffer, inputBufferSize, &inputBufferMemory, VK_MEMORY_PROPERTY_HOST_CACHED_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
         createAndAllocateBuffer(&heapBuffer, heapBufferSize, &heapBufferMemory, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
         createAndAllocateBuffer(&i32heapBuffer, 4*heapBufferSize, &i32heapBufferMemory, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
         createAndAllocateBuffer(&ioBuffer, ioBufferSize, &ioBufferMemory, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
+        createAndAllocateBuffer(&ioBytesBuffer, ioBytesBufferSize, &ioBytesBufferMemory, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
     }
 
     void createDescriptorSetLayout()
     {
-        VkDescriptorSetLayoutBinding descriptorSetLayoutBindings[5] = {
+        VkDescriptorSetLayoutBinding descriptorSetLayoutBindings[4] = {
             {.binding = 0,
              .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
              .descriptorCount = 1,
@@ -606,15 +583,11 @@ class ComputeApplication
              .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
              .descriptorCount = 1,
              .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT},
-            {.binding = 4,
-             .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-             .descriptorCount = 1,
-             .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT},
         };
 
         VkDescriptorSetLayoutCreateInfo descriptorSetLayoutCreateInfo = {
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-            .bindingCount = 5,
+            .bindingCount = 4,
             .pBindings = descriptorSetLayoutBindings};
 
         // Create the descriptor set layout.
@@ -626,7 +599,7 @@ class ComputeApplication
     {
         VkDescriptorPoolSize descriptorPoolSize = {
             .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-            .descriptorCount = 5};
+            .descriptorCount = 4};
 
         VkDescriptorPoolCreateInfo descriptorPoolCreateInfo = {
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
@@ -651,16 +624,6 @@ class ComputeApplication
         VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &descriptorSetAllocateInfo, &descriptorSet));
         //printf("vkAllocateDescriptorSets done\n");
 
-        VkDescriptorBufferInfo inputDescriptorBufferInfo = {
-            .buffer = inputBuffer,
-            .offset = 0,
-            .range = inputBufferSize};
-
-        VkDescriptorBufferInfo outputDescriptorBufferInfo = {
-            .buffer = buffer,
-            .offset = 0,
-            .range = bufferSize};
-
         VkDescriptorBufferInfo heapDescriptorBufferInfo = {
             .buffer = heapBuffer,
             .offset = 0,
@@ -676,27 +639,16 @@ class ComputeApplication
             .offset = 0,
             .range = ioBufferSize};
 
-        VkWriteDescriptorSet writeDescriptorSets[5] = {
+        VkDescriptorBufferInfo ioBytesDescriptorBufferInfo = {
+            .buffer = ioBytesBuffer,
+            .offset = 0,
+            .range = ioBytesBufferSize};
+
+        VkWriteDescriptorSet writeDescriptorSets[4] = {
             {
                 .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
                 .dstSet = descriptorSet,
                 .dstBinding = 0,
-                .descriptorCount = 1,
-                .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-                .pBufferInfo = &inputDescriptorBufferInfo,
-            },
-            {
-                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                .dstSet = descriptorSet,
-                .dstBinding = 1,
-                .descriptorCount = 1,
-                .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-                .pBufferInfo = &outputDescriptorBufferInfo,
-            },
-            {
-                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                .dstSet = descriptorSet,
-                .dstBinding = 2,
                 .descriptorCount = 1,
                 .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
                 .pBufferInfo = &heapDescriptorBufferInfo,
@@ -704,7 +656,7 @@ class ComputeApplication
             {
                 .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
                 .dstSet = descriptorSet,
-                .dstBinding = 3,
+                .dstBinding = 1,
                 .descriptorCount = 1,
                 .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
                 .pBufferInfo = &i32heapDescriptorBufferInfo,
@@ -712,36 +664,23 @@ class ComputeApplication
             {
                 .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
                 .dstSet = descriptorSet,
-                .dstBinding = 4,
+                .dstBinding = 2,
                 .descriptorCount = 1,
                 .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
                 .pBufferInfo = &ioDescriptorBufferInfo,
             },
-        };
-
-        vkUpdateDescriptorSets(device, 5, writeDescriptorSets, 0, NULL);
-        //printf("vkUpdateDescriptorSets done\n");
-    }
-
-    void updateOutputDescriptorSet()
-    {
-        VkDescriptorBufferInfo outputDescriptorBufferInfo = {
-            .buffer = buffer,
-            .offset = 0,
-            .range = bufferSize};
-
-        VkWriteDescriptorSet writeDescriptorSets[1] = {
             {
                 .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
                 .dstSet = descriptorSet,
-                .dstBinding = 1,
+                .dstBinding = 3,
                 .descriptorCount = 1,
                 .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-                .pBufferInfo = &outputDescriptorBufferInfo,
-            }
+                .pBufferInfo = &ioBytesDescriptorBufferInfo,
+            },
         };
 
-        vkUpdateDescriptorSets(device, 1, writeDescriptorSets, 0, NULL);
+        vkUpdateDescriptorSets(device, 4, writeDescriptorSets, 0, NULL);
+        //printf("vkUpdateDescriptorSets done\n");
     }
 
     // Read file into array of bytes, and cast to uint32_t*, then return.
@@ -949,16 +888,14 @@ class ComputeApplication
         }
 
         vkDestroyFence(device, fence, NULL);
-        vkFreeMemory(device, bufferMemory, NULL);
-        vkFreeMemory(device, inputBufferMemory, NULL);
         vkFreeMemory(device, heapBufferMemory, NULL);
         vkFreeMemory(device, i32heapBufferMemory, NULL);
         vkFreeMemory(device, ioBufferMemory, NULL);
-        vkDestroyBuffer(device, buffer, NULL);
-        vkDestroyBuffer(device, inputBuffer, NULL);
+        vkFreeMemory(device, ioBytesBufferMemory, NULL);
         vkDestroyBuffer(device, heapBuffer, NULL);
         vkDestroyBuffer(device, i32heapBuffer, NULL);
         vkDestroyBuffer(device, ioBuffer, NULL);
+        vkDestroyBuffer(device, ioBytesBuffer, NULL);
         vkDestroyShaderModule(device, computeShaderModule, NULL);
         vkDestroyDescriptorPool(device, descriptorPool, NULL);
         vkDestroyDescriptorSetLayout(device, descriptorSetLayout, NULL);

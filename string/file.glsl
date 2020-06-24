@@ -1,30 +1,16 @@
-#define version #version
-#define extension #extension
-
-version 450
-extension GL_EXT_shader_explicit_arithmetic_types : require
-extension GL_KHR_memory_scope_semantics : require
-
-#define HEAP_SIZE 8192
+#include "string.glsl"
 
 struct ioRequest {
-    int ioType;
-    ivec2 filename;
-    int offset;
-    int count;
-    ivec2 result;
-    int status;
+    int32_t ioType;
+    int32_t status;
+    int32_t offset;
+    int32_t count;
+    i32vec2 filename;
+    i32vec2 data;
 };
 
-layout ( local_size_x = 16, local_size_y = 1, local_size_z = 1 ) in;
-
-layout(std430, binding = 0) buffer inputBuffer { int32_t inputs[]; };
-layout(std430, binding = 1) buffer outputBuffer { int32_t outputs[]; };
-layout(std430, binding = 2) volatile buffer heapBuffer { int8_t heap[]; };
-layout(std430, binding = 3) buffer i32heapBuffer { int32_t i32heap[]; };
-layout(std430, binding = 4) volatile buffer ioBuffer { int32_t ioRequests[]; };
-
-#include "string.glsl"
+layout(std430, binding = 2) volatile buffer ioBuffer { ioRequest ioRequests[]; };
+layout(std430, binding = 3) volatile buffer ioBytes { char ioHeap[]; };
 
 #define IO_READ 1
 #define IO_WRITE 2
@@ -40,67 +26,102 @@ layout(std430, binding = 4) volatile buffer ioBuffer { int32_t ioRequests[]; };
 #define IO_ERROR 5
 #define IO_HANDLED 255
 
+#define FREE_IO(f) { int _ihp_ = ioHeapPtr; f; ioHeapPtr = _ihp_; }
+
 const string stdin = string(0, 0);
 const string stdout = string(1, 0);
 const string stderr = string(2, 0);
 
 int errno = 0;
 
-int requestIO(ioRequest req) {
-    int32_t reqNum = atomicAdd(ioRequests[0], 1);
-    int32_t off = 8 + reqNum * 8;
-    ioRequests[off+0] = req.ioType;
-    ioRequests[off+1] = req.status;
-    ioRequests[off+2] = req.offset;
-    ioRequests[off+3] = req.count;
-    ioRequests[off+4] = req.filename.x;
-    ioRequests[off+5] = req.filename.y;
-    ioRequests[off+6] = req.result.x;
-    ioRequests[off+7] = req.result.y;
-    return reqNum;
+int ioHeapStart = int(gl_GlobalInvocationID.x) * HEAP_SIZE;
+int ioHeapEnd = heapStart + HEAP_SIZE;
+
+int ioHeapPtr = ioHeapStart;
+
+struct io {
+    int index;
+    int heapBufStart;
+};
+
+string ioMalloc(int len) {
+    int ptr = ioHeapPtr;
+    ioHeapPtr += len;
+    return string(ptr, ioHeapPtr);
 }
 
-string awaitIO(int reqNum, inout int status) {
-    if (ioRequests[8 + reqNum * 8 + 1] != IO_NONE) {
-        while (ioRequests[8 + reqNum * 8 + 1] < IO_COMPLETE);
-        status = ioRequests[8 + reqNum * 8 + 1];
+string copyHeapToIO(string s, string b) {
+    for (int i = s.x, x = b.x; x < b.y && i < s.y; x++, i++) {
+        ioHeap[x] = heap[i];
     }
-    ioRequests[8 + reqNum * 8 + 1] = IO_HANDLED;
-    string s = string(ioRequests[8 + reqNum * 8 + 6], ioRequests[8 + reqNum * 8 + 7]);
-    //memoryBarrier(gl_ScopeDevice, gl_StorageSemanticsBuffer, gl_SemanticsAcquireRelease);
+    return b;
+}
+
+string copyHeapToIO(string s) {
+    return copyHeapToIO(s, ioMalloc(strLen(s)));
+}
+
+io requestIO(ioRequest req) {
+    int32_t reqNum = atomicAdd(ioRequests[0].ioType, 1) + 1;
+    io token = io(reqNum, req.data.x);
+    if (strLen(req.filename) > 0) {
+        req.filename = copyHeapToIO(req.filename);
+    }
+    if (req.count > 0) {
+        string b = ioMalloc(req.count);
+        if (req.ioType == IO_WRITE) {
+            copyHeapToIO(req.data, b);
+        }
+        req.data = b;
+    }
+    ioRequests[reqNum] = req;
+    return token;
+}
+
+string awaitIO(io reqNum, inout int status) {
+    if (ioRequests[reqNum.index].status != IO_NONE) {
+        while (ioRequests[reqNum.index].status < IO_COMPLETE);
+    }
+    ioRequest req = ioRequests[reqNum.index];
+    status = req.status;
+    ioRequests[reqNum.index].status = IO_HANDLED;
+    string s = string(reqNum.heapBufStart, reqNum.heapBufStart + strLen(req.data));
+    for (int i = s.x, x = req.data.x, y = req.data.y; x < y; x++, i++) {
+        heap[i] = ioHeap[x];
+    }
     return s;
 }
 
-string awaitIO(int reqNum) {
+string awaitIO(io reqNum) {
     return awaitIO(reqNum, errno);
 }
 
-int read(string filename, int offset, int count, string buf) {
-    return requestIO(ioRequest(IO_READ, filename, offset, min(count, strLen(buf)), buf, IO_START));
+io read(string filename, int offset, int count, string buf) {
+    return requestIO(ioRequest(IO_READ, IO_START, offset, min(count, strLen(buf)), filename, buf));
 }
 
-int read(string filename, string buf) {
+io read(string filename, string buf) {
     return read(filename, 0, strLen(buf), buf);
 }
 
-int write(string filename, int offset, int count, string buf) {
-    return requestIO(ioRequest(IO_WRITE, filename, offset, min(count, strLen(buf)), buf, IO_START));
+io write(string filename, int offset, int count, string buf) {
+    return requestIO(ioRequest(IO_WRITE, IO_START, offset, min(count, strLen(buf)), filename, buf));
 }
 
-int write(string filename, string buf) {
+io write(string filename, string buf) {
     return write(filename, 0, strLen(buf), buf);
 }
 
-int truncateFile(string filename, int count) {
-    return requestIO(ioRequest(IO_TRUNCATE, filename, 0, count, string(0,0), IO_START));
+io truncateFile(string filename, int count) {
+    return requestIO(ioRequest(IO_TRUNCATE, IO_START, 0, count, filename, string(0,0)));
 }
 
-int deleteFile(string filename) {
-    return requestIO(ioRequest(IO_DELETE, filename, 0, 0, string(0,0), IO_START));
+io deleteFile(string filename) {
+    return requestIO(ioRequest(IO_DELETE, IO_START, 0, 0, filename, string(0,0)));
 }
 
-int createFile(string filename) {
-    return requestIO(ioRequest(IO_CREATE, filename, 0, 0, string(0,0), IO_START));
+io createFile(string filename) {
+    return requestIO(ioRequest(IO_CREATE, IO_START, 0, 0, filename, string(0,0)));
 }
 
 string readSync(string filename, int offset, int count, string buf) { return awaitIO(read(filename, offset, count, buf)); }
@@ -110,9 +131,11 @@ string writeSync(string filename, int offset, int count, string buf) { return aw
 string writeSync(string filename, string buf) { return awaitIO(write(filename, buf)); }
 
 void print(string message) {
-    awaitIO(write(stdout, -1, strLen(message), message));
+    FREE_IO(awaitIO(write(stdout, -1, strLen(message), message)));
 }
 
 void println(string message) {
+    int hp = heapPtr;
     print(concat(message, "\n"));
+    heapPtr = hp;
 }

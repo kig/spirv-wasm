@@ -50,4 +50,5 @@ for (segment of segments) {
 	lastSegment = segment;
 }
 
+console.log('#version 450\n#extension GL_EXT_shader_explicit_arithmetic_types : require\n\n');
 console.log(output.join('').replace('%%GLOBALS%%', globals.join('\n')).replace('%%INIT%%', init.join('\n')));

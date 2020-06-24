@@ -4,6 +4,11 @@
 #define string ivec2
 #define char int8_t
 
+#define FREE(f) { int _hp_ = heapPtr; f; heapPtr = _hp_; }
+
+layout(std430, binding = 0) buffer heapBuffer { char heap[]; };
+layout(std430, binding = 1) buffer i32heapBuffer { int32_t i32heap[]; };
+
 int heapStart = int(gl_GlobalInvocationID.x) * HEAP_SIZE;
 int heapEnd = heapStart + HEAP_SIZE;
 

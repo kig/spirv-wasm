@@ -1,11 +1,15 @@
+#define HEAP_SIZE 8192
+
 #include "file.glsl"
+
+layout ( local_size_x = 16, local_size_y = 1, local_size_z = 1 ) in;
 
 bool testRead() {
     bool okShort = strEq(readSync("hello.txt", malloc(100)), "Hello, world!");
 
     string buf = malloc(100);
     int ok;
-    int reqNum = read("hello.txt", 0, 100, buf);
+    io reqNum = read("hello.txt", 0, 100, buf);
     string res = awaitIO(reqNum, ok);
     bool okLong = strEq(res, "Hello, world!");
 
@@ -35,7 +39,7 @@ void printTest(bool ok, string name) {
         print(concat(toString(gl_GlobalInvocationID.x), ":", name, ok ? " successful\n" : " failed!\n"));
 }
 
-#define TEST(testFn) printTest(testFn(), #testFn)
+#define TEST(testFn) FREE(FREE_IO(printTest(testFn(), #testFn)))
 
 void main() {
     initGlobals();
