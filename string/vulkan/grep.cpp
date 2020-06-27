@@ -20,8 +20,10 @@
 
 #ifdef NDEBUG
 const bool enableValidationLayers = false;
+const bool verbose = false;
 #else
 const bool enableValidationLayers = true;
+const bool verbose = true;
 #endif
 
 // Used for validating return values of Vulkan API calls.
@@ -83,11 +85,11 @@ struct ioRequest {
     int32_t result_end;
 };
 
-#define IO_REQUEST_COUNT 8192
+#define IO_REQUEST_COUNT 262144
 
 struct ioRequests {
     int32_t count;
-    int32_t _pad1;
+    int32_t exitCode;
     int32_t _pad2;
     int32_t _pad3;
     int32_t _pad4;
@@ -136,21 +138,21 @@ class ComputeApplication
 
     // Internal buffers for the device.
     VkBuffer heapBuffer;
-    VkDeviceMemory heapBufferMemory;
+    VkDeviceMemory heapMemory;
 
-    VkBuffer i32heapBuffer;
-    VkDeviceMemory i32heapBufferMemory;
+    VkBuffer i32HeapBuffer;
+    VkDeviceMemory i32HeapMemory;
 
     VkBuffer ioBuffer;
-    VkDeviceMemory ioBufferMemory;
+    VkDeviceMemory ioMemory;
 
-    VkBuffer ioBytesBuffer;
-    VkDeviceMemory ioBytesBufferMemory;
+    VkBuffer ioHeapBuffer;
+    VkDeviceMemory ioHeapMemory;
 
     uint32_t heapBufferSize; // size of `heapBuffer` in bytes.
-    uint32_t i32heapBufferSize; // size of `i32heapBuffer` in bytes.
+    uint32_t i32HeapBufferSize; // size of `i32HeapBuffer` in bytes.
     uint32_t ioBufferSize; // size of `heapBuffer` in bytes.
-    uint32_t ioBytesBufferSize; // size of `heapBuffer` in bytes.
+    uint32_t ioHeapBufferSize; // size of `heapBuffer` in bytes.
 
     std::vector<const char *> enabledLayers;
 
@@ -158,27 +160,29 @@ class ComputeApplication
 
     VkFence fence;
 
-    void *mappedIoMemory = NULL;
-    void *mappedIoBytesMemory = NULL;
+    void *mappedHeapMemory = NULL;
+    void *mappedI32HeapMemory = NULL;
+    void *mappedIOMemory = NULL;
+    void *mappedIOHeapMemory = NULL;
 
     uint32_t queueFamilyIndex;
 
     uint32_t vulkanDeviceIndex = 0;
 
-    uint32_t maxRequestSize = 1024;
-    uint32_t maxResponseSize = 1024 * 4;
     uint32_t heapSize = 8192;
     uint32_t ioSize = sizeof(ioRequests);
 
-    uint32_t workSize[3] = {16, 1, 1};
-
+    uint32_t workSize[3] = {256, 1, 1};
 
     const char *programFileName;
 
-    uint32_t requestCount = workSize[0] * workSize[1] * workSize[2] * 16;
+    uint32_t threadCount = workSize[0] * workSize[1] * workSize[2] * 16;
 
   public:
-    void run(const char *fileName)
+
+    int exitCode = 0;
+
+    void run(const char *fileName, int argc, char* argv[])
     {
 
         programFileName = fileName;
@@ -188,14 +192,18 @@ class ComputeApplication
         _setmode(_fileno(stdin), _O_BINARY);
 #endif
 
-        heapBufferSize = heapSize * requestCount;
+        heapBufferSize = heapSize * (threadCount + 1);
         ioBufferSize = ioSize;
-        ioBytesBufferSize = heapBufferSize;
+        ioHeapBufferSize = heapBufferSize;
+
+        if (verbose) printf("createInstance\n");
 
         // Initialize vulkan:
         createInstance();
         findPhysicalDevice();
         createDevice();
+
+        if (verbose) printf("createBuffer\n");
 
         // Create input and output buffers
         createBuffer();
@@ -206,22 +214,41 @@ class ComputeApplication
         createComputePipeline();
         createCommandBuffer();
 
+        if (verbose) printf("mapMemory\n");
+
         createFence();
         mapMemory();
 
-        bool firstFrame = true;
         volatile bool ioRunning = true;
         volatile bool ioReset = true;
 
-        char *heapBuf = (char *)mappedIoBytesMemory;
-        ioRequests *ioReqs = (ioRequests *)mappedIoMemory;
+        char *ioHeapBuf = (char *)mappedIOHeapMemory;
+        ioRequests *ioReqs = (ioRequests *)mappedIOMemory;
+        char *heapBuf = (char *)mappedHeapMemory;
+        int32_t *i32HeapBuf = (int32_t *) mappedI32HeapMemory;
+
+        // Copy argv to the heap.
+        int32_t heapEnd = heapSize * threadCount;
+        i32HeapBuf[heapEnd] = heapEnd+2;          // start index of the argv array
+        i32HeapBuf[heapEnd+1] = heapEnd+2+argc*2; // end index of the argv array
+        int32_t heapPtr = heapEnd;
+        int32_t i32HeapPtr = heapEnd + 2;
+        for (int i = 0; i < argc; i++) {
+            int32_t len = strlen(argv[i]);
+            i32HeapBuf[i32HeapPtr++] = heapPtr;       // start index of argv[i] on the heap
+            i32HeapBuf[i32HeapPtr++] = heapPtr + len; // end index of argv[i]
+            memcpy(heapBuf + heapPtr, argv[i], len);  // copy argv[i] to the heap
+            heapPtr += len;
+        }
+        if (verbose) printf("Writing argv to GPU\n");
+        writeToGPU(heapMemory, heapEnd, heapPtr-heapEnd);
+        writeToGPU(i32HeapMemory, heapEnd, i32HeapPtr-heapEnd);
 
         ioRunning = true;
-        std::thread ioThread(handleIORequests, this, ioReqs, heapBuf, &ioRunning, &ioReset);
+        std::thread ioThread(handleIORequests, this, ioReqs, ioHeapBuf, &ioRunning, &ioReset);
 
         std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
-        for (int i = 0; i < 100; i++) {
-            printf("%d\n", i);
+        for (int i = 0; i < 1; i++) {
             while(ioReset);
             startCommandBuffer();
             waitCommandBuffer();
@@ -232,8 +259,11 @@ class ComputeApplication
         ioRunning = false;
         ioThread.join();
 
-        printf("\nElapsed: %ld ms\n", std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count());
-        printf("Test runs per second: %.0f\n\n", (requestCount * 100.0) / (0.001 * std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count()));
+        if (verbose) printf("\nElapsed: %ld ms\n", std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count());
+
+        exitCode = ioReqs->exitCode;
+
+        printf("Last seen %d\n", ioReqs->_pad2);
 
         unmapMemory();
         cleanup();
@@ -241,64 +271,46 @@ class ComputeApplication
 
     void mapMemory()
     {
-        vkMapMemory(device, ioBufferMemory, 0, ioBufferSize, 0, &mappedIoMemory);
-        vkMapMemory(device, ioBytesBufferMemory, 0, ioBytesBufferSize, 0, &mappedIoBytesMemory);
+        vkMapMemory(device, heapMemory, 0, heapBufferSize, 0, &mappedHeapMemory);
+        vkMapMemory(device, i32HeapMemory, 0, i32HeapBufferSize, 0, &mappedI32HeapMemory);
+        vkMapMemory(device, ioMemory, 0, ioBufferSize, 0, &mappedIOMemory);
+        vkMapMemory(device, ioHeapMemory, 0, ioHeapBufferSize, 0, &mappedIOHeapMemory);
     }
 
     void unmapMemory()
     {
-        vkUnmapMemory(device, ioBufferMemory);
-        vkUnmapMemory(device, ioBytesBufferMemory);
+        vkUnmapMemory(device, heapMemory);
+        vkUnmapMemory(device, i32HeapMemory);
+        vkUnmapMemory(device, ioMemory);
+        vkUnmapMemory(device, ioHeapMemory);
     }
 
-
-    void writeIOToGPU(VkDeviceSize offset, VkDeviceSize size)
+    void writeToGPU(VkDeviceMemory memory, VkDeviceSize offset, VkDeviceSize size)
     {
-//        printf("Write IO to GPU: %lu %lu\n", offset, size);
-        VkMappedMemoryRange bufferMemoryRange = {
+        VkMappedMemoryRange memoryRange = {
             .sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
             .pNext = NULL,
-            .memory = ioBufferMemory,
+            .memory = memory,
             .offset = offset,
             .size = size};
-        vkFlushMappedMemoryRanges(device, 1, &bufferMemoryRange);
+        vkFlushMappedMemoryRanges(device, 1, &memoryRange);
     }
 
-    void readIOFromGPU(VkDeviceSize offset, VkDeviceSize size)
+    void readFromGPU(VkDeviceMemory memory, VkDeviceSize offset, VkDeviceSize size)
     {
-//        printf("Read IO from GPU: %lu %lu\n", offset, size);
-        VkMappedMemoryRange bufferMemoryRange = {
+        VkMappedMemoryRange memoryRange = {
             .sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
             .pNext = NULL,
-            .memory = ioBufferMemory,
+            .memory = memory,
             .offset = offset,
             .size = size};
-        vkInvalidateMappedMemoryRanges(device, 1, &bufferMemoryRange);
+        vkInvalidateMappedMemoryRanges(device, 1, &memoryRange);
     }
 
-    void writeHeapToGPU(VkDeviceSize offset, VkDeviceSize size)
-    {
-//        printf("Write heap to GPU: %lu %lu\n", offset, size);
-        VkMappedMemoryRange ioBytesBufferMemoryRange = {
-            .sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
-            .pNext = NULL,
-            .memory = ioBytesBufferMemory,
-            .offset = offset,
-            .size = size};
-        vkFlushMappedMemoryRanges(device, 1, &ioBytesBufferMemoryRange);
-    }
-
-    void readHeapFromGPU(VkDeviceSize offset, VkDeviceSize size)
-    {
-//        printf("Read heap from GPU: %lu %lu\n", offset, size);
-        VkMappedMemoryRange ioBytesBufferMemoryRange = {
-            .sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
-            .pNext = NULL,
-            .memory = ioBytesBufferMemory,
-            .offset = offset,
-            .size = size};
-        vkInvalidateMappedMemoryRanges(device, 1, &ioBytesBufferMemoryRange);
-    }
+    void writeIOToGPU(VkDeviceSize offset, VkDeviceSize size) { writeToGPU(ioMemory, offset, size); }
+    void readIOFromGPU(VkDeviceSize offset, VkDeviceSize size) { readFromGPU(ioMemory, offset, size); }
+    void writeIOHeapToGPU(VkDeviceSize offset, VkDeviceSize size) { writeToGPU(ioHeapMemory, offset, size); }
+    void readIOHeapFromGPU(VkDeviceSize offset, VkDeviceSize size) { readFromGPU(ioHeapMemory, offset, size); }
 
     static VKAPI_ATTR VkBool32 VKAPI_CALL debugReportCallbackFn(
         VkDebugReportFlagsEXT flags,
@@ -561,10 +573,10 @@ class ComputeApplication
 
     void createBuffer()
     {
-        createAndAllocateBuffer(&heapBuffer, heapBufferSize, &heapBufferMemory, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
-        createAndAllocateBuffer(&i32heapBuffer, 4*heapBufferSize, &i32heapBufferMemory, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
-        createAndAllocateBuffer(&ioBuffer, ioBufferSize, &ioBufferMemory, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
-        createAndAllocateBuffer(&ioBytesBuffer, ioBytesBufferSize, &ioBytesBufferMemory, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
+        createAndAllocateBuffer(&heapBuffer, heapBufferSize, &heapMemory, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
+        createAndAllocateBuffer(&i32HeapBuffer, 4*heapBufferSize, &i32HeapMemory, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
+        createAndAllocateBuffer(&ioBuffer, ioBufferSize, &ioMemory, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
+        createAndAllocateBuffer(&ioHeapBuffer, ioHeapBufferSize, &ioHeapMemory, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
     }
 
     void createDescriptorSetLayout()
@@ -632,8 +644,8 @@ class ComputeApplication
             .offset = 0,
             .range = heapBufferSize};
 
-        VkDescriptorBufferInfo i32heapDescriptorBufferInfo = {
-            .buffer = i32heapBuffer,
+        VkDescriptorBufferInfo i32HeapDescriptorBufferInfo = {
+            .buffer = i32HeapBuffer,
             .offset = 0,
             .range = 4*heapBufferSize};
 
@@ -642,10 +654,10 @@ class ComputeApplication
             .offset = 0,
             .range = ioBufferSize};
 
-        VkDescriptorBufferInfo ioBytesDescriptorBufferInfo = {
-            .buffer = ioBytesBuffer,
+        VkDescriptorBufferInfo ioHeapDescriptorBufferInfo = {
+            .buffer = ioHeapBuffer,
             .offset = 0,
-            .range = ioBytesBufferSize};
+            .range = ioHeapBufferSize};
 
         VkWriteDescriptorSet writeDescriptorSets[4] = {
             {
@@ -662,7 +674,7 @@ class ComputeApplication
                 .dstBinding = 1,
                 .descriptorCount = 1,
                 .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-                .pBufferInfo = &i32heapDescriptorBufferInfo,
+                .pBufferInfo = &i32HeapDescriptorBufferInfo,
             },
             {
                 .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
@@ -678,7 +690,7 @@ class ComputeApplication
                 .dstBinding = 3,
                 .descriptorCount = 1,
                 .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-                .pBufferInfo = &ioBytesDescriptorBufferInfo,
+                .pBufferInfo = &ioHeapDescriptorBufferInfo,
             },
         };
 
@@ -869,7 +881,7 @@ class ComputeApplication
         and we will not be sure that the command has finished executing unless we wait for the fence.
         Hence, we use a fence here.
         */
-        VK_CHECK_RESULT(vkWaitForFences(device, 1, &fence, VK_TRUE, 10000000000000));
+        VK_CHECK_RESULT(vkWaitForFences(device, 1, &fence, VK_TRUE, 100000000000000));
         VK_CHECK_RESULT(vkResetFences(device, 1, &fence));
     }
 
@@ -891,14 +903,14 @@ class ComputeApplication
         }
 
         vkDestroyFence(device, fence, NULL);
-        vkFreeMemory(device, heapBufferMemory, NULL);
-        vkFreeMemory(device, i32heapBufferMemory, NULL);
-        vkFreeMemory(device, ioBufferMemory, NULL);
-        vkFreeMemory(device, ioBytesBufferMemory, NULL);
+        vkFreeMemory(device, heapMemory, NULL);
+        vkFreeMemory(device, i32HeapMemory, NULL);
+        vkFreeMemory(device, ioMemory, NULL);
+        vkFreeMemory(device, ioHeapMemory, NULL);
         vkDestroyBuffer(device, heapBuffer, NULL);
-        vkDestroyBuffer(device, i32heapBuffer, NULL);
+        vkDestroyBuffer(device, i32HeapBuffer, NULL);
         vkDestroyBuffer(device, ioBuffer, NULL);
-        vkDestroyBuffer(device, ioBytesBuffer, NULL);
+        vkDestroyBuffer(device, ioHeapBuffer, NULL);
         vkDestroyShaderModule(device, computeShaderModule, NULL);
         vkDestroyDescriptorPool(device, descriptorPool, NULL);
         vkDestroyDescriptorSetLayout(device, descriptorSetLayout, NULL);
@@ -915,10 +927,11 @@ FILE* openFile(char *filename, FILE* file, const char *mode) {
     return fopen(filename, mode);
 }
 
+FILE *ff = NULL;
 
 void handleIORequest(ComputeApplication *app, ioRequests *ioReqs, char *heapBuf, int i) {
     ioRequest req = ioReqs->requests[i];
-    //printf("IO req %d: %d %d %d %d %d %d %d %d\n", i, req.ioType, req.filename_start, req.filename_end, req.offset, req.count, req.result_start, req.result_end, req.status);
+    if (verbose) printf("IO req %d: %d %d %d %d %d %d %d %d\n", i, req.ioType, req.filename_start, req.filename_end, req.offset, req.count, req.result_start, req.result_end, req.status);
     char *filename = NULL;
     FILE *file = NULL;
     if (req.filename_end == 0) {
@@ -929,26 +942,28 @@ void handleIORequest(ComputeApplication *app, ioRequests *ioReqs, char *heapBuf,
         } else if (req.filename_start == 2) {
             file = stderr;
         }
+    } else if (ff != NULL) {
+        file = ff;
     } else {
         VkDeviceSize filenameLength = req.filename_end - req.filename_start;
-        //printf("Filename length %lu\n", filenameLength);
+        if (verbose) printf("Filename length %lu\n", filenameLength);
         filename = (char*)malloc(filenameLength + 1);
-        //app->readHeapFromGPU(req.filename_start, filenameLength);
+        //app->readIOHeapFromGPU(req.filename_start, filenameLength);
         memcpy(filename, heapBuf + req.filename_start, filenameLength);
         filename[filenameLength] = 0;
     }
     if (req.ioType == IO_READ) {
-        //printf("Read %s\n", filename);
+        if (verbose) printf("Read %s\n", filename);
         ioReqs->requests[i].status = IO_IN_PROGRESS;
         FILE *fd = openFile(filename, file, "r");
         fseek(fd, req.offset, SEEK_SET);
         int32_t bytes = fread(heapBuf + req.result_start, 1, req.count, fd);
-        if (file == NULL) fclose(fd);
-        //printf("Result:\n%s\n", heapBuf + req.result_start);
-        //app->writeHeapToGPU(req.result_start, bytes);
+        if (file == NULL) ff = fd; // fclose(fd);
+        if (verbose) printf("Result:\n%s\n", heapBuf + req.result_start);
+        //app->writeIOHeapToGPU(req.result_start, bytes);
         ioReqs->requests[i].result_end = req.result_start + bytes;
         ioReqs->requests[i].status = IO_COMPLETE;
-        //printf("IO completed: %d - status %d\n", i, ioReqs->requests[i].status);
+        if (verbose) printf("IO completed: %d - status %d\n", i, ioReqs->requests[i].status);
     } else if (req.ioType == IO_WRITE) {
         ioReqs->requests[i].status = IO_IN_PROGRESS;
         FILE *fd = openFile(filename, file, "r+");
@@ -957,14 +972,16 @@ void handleIORequest(ComputeApplication *app, ioRequests *ioReqs, char *heapBuf,
         } else {
             fseek(fd, req.offset, SEEK_SET);
         }
+        //app->readIOHeapFromGPU(req.result_start, req.count);
         int bytes = fwrite(heapBuf + req.result_start, 1, req.count, fd);
         if (file == NULL) fclose(fd);
         ioReqs->requests[i].result_end = req.result_start + bytes;
         ioReqs->requests[i].status = IO_COMPLETE;
-        //printf("IO completed: %d - status %d\n", i, ioReqs->requests[i].status);
+        if (verbose) printf("IO completed: %d - status %d\n", i, ioReqs->requests[i].status);
     } else if (req.ioType == IO_CREATE) {
         ioReqs->requests[i].status = IO_IN_PROGRESS;
         FILE *fd = openFile(filename, file, "w");
+        //app->readIOHeapFromGPU(req.result_start, req.count);
         int bytes = fwrite(heapBuf + req.result_start, 1, req.count, fd);
         if (file == NULL) fclose(fd);
         ioReqs->requests[i].result_end = req.result_start + bytes;
@@ -980,7 +997,7 @@ void handleIORequest(ComputeApplication *app, ioRequests *ioReqs, char *heapBuf,
     } else {
         ioReqs->requests[i].status = IO_ERROR;
     }
-    //app->writeIOToGPU((8 + i * 8) * 4, 8 * 4);
+    app->writeIOToGPU((8 + i * 8) * 4, 8 * 4);
 }
 
 void handleIORequests(ComputeApplication *app, ioRequests *ioReqs, char *heapBuf, volatile bool *ioRunning, volatile bool *ioReset) {
@@ -988,7 +1005,7 @@ void handleIORequests(ComputeApplication *app, ioRequests *ioReqs, char *heapBuf
     std::vector<std::thread> threads;
 
     int32_t lastReqNum = 0;
-    //printf("IO Running\n");
+    if (verbose) printf("IO Running\n");
     while (*ioRunning) {
         if (*ioReset) {
             for (std::thread& t : threads) {
@@ -1004,14 +1021,15 @@ void handleIORequests(ComputeApplication *app, ioRequests *ioReqs, char *heapBuf
         //app->readIOFromGPU(0, 8 * 4);
         int32_t reqNum = ioReqs->count;
         for (int32_t i = lastReqNum; i < reqNum; i++) {
-            //printf("Got IO request %d\n", i);
+            if (verbose) printf("Got IO request %d\n", i);
             //threads.push_back(std::thread(handleIORequest, app, ioReqs, heapBuf, i));
+            //app->readIOFromGPU((8 + i * 8) * 4, 8 * 4);
             handleIORequest(app, ioReqs, heapBuf, i);
         }
         lastReqNum = reqNum;
         for (int32_t i = 0; i < reqNum; i++) {
             if (ioReqs->requests[i].status == IO_HANDLED) {
-                //printf("GPU got IO: %d - status %d\n", i, ioReqs->requests[i].status);
+                if (verbose) printf("GPU got IO: %d - status %d\n", i, ioReqs->requests[i].status);
                 ioReqs->requests[i].status = IO_NONE;
             } else if (ioReqs->requests[i].status == IO_COMPLETE) {
                 //app->readIOFromGPU((8 + i * 8) * 4, 8 * 4);
@@ -1024,7 +1042,7 @@ void handleIORequests(ComputeApplication *app, ioRequests *ioReqs, char *heapBuf
         }
     }
     threads.clear();
-    //printf("Exited IO thread\n");
+    if (verbose) printf("Exited IO thread\n");
 }
 
 
@@ -1034,7 +1052,7 @@ int main(int argc, char *argv[])
 
     try
     {
-        app.run(argc > 1 ? argv[1] : "test_file.spv");
+        app.run("grep.spv", argc, argv);
     }
     catch (const std::runtime_error &e)
     {
@@ -1043,5 +1061,5 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
-    return EXIT_SUCCESS;
+    return app.exitCode;
 }

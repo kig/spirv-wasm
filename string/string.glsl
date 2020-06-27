@@ -6,18 +6,41 @@
 
 #define FREE(f) { int _hp_ = heapPtr; f; heapPtr = _hp_; }
 
+#define _w(c) heap[heapPtr++] = char(c)
+#define _(c) heap[heapPtr++] = CHR_##c;
+
 layout(std430, binding = 0) buffer heapBuffer { char heap[]; };
 layout(std430, binding = 1) buffer i32heapBuffer { int32_t i32heap[]; };
 
-int heapStart = int(gl_GlobalInvocationID.x) * HEAP_SIZE;
+int ThreadGroupCount = int(gl_NumWorkGroups.x);
+int ThreadLocalCount = int(gl_WorkGroupSize.x);
+int ThreadCount = ThreadGroupCount * ThreadLocalCount;
+int ThreadID = int(gl_GlobalInvocationID.x);
+int ThreadGroupID = int(gl_WorkGroupID.x);
+int ThreadLocalID = int(gl_LocalInvocationID.x);
+
+int heapStart = int(ThreadID) * HEAP_SIZE;
 int heapEnd = heapStart + HEAP_SIZE;
 
 int heapPtr = heapStart;
 
 int i32heapPtr = heapStart;
 
-int strLen(ivec2 str) {
+int strLen(string str) {
 	return str.y - str.x;
+}
+
+int arrLen(stringArray arr) {
+    return (arr.y - arr.x) / 2;
+}
+
+string aGet(stringArray arr, int index) {
+    return string(i32heap[arr.x + index * 2], i32heap[arr.x + index * 2 + 1]);
+}
+
+void aSet(stringArray arr, int index, string value) {
+    i32heap[arr.x + index * 2] = value.x;
+    i32heap[arr.x + index * 2 + 1] = value.y;
 }
 
 string malloc(int len) {
@@ -51,11 +74,11 @@ bool isWhitespace(char c) {
 }
 
 char lowercase(char c) {
-	return c + char((c >= CHR_A && c <= CHR_Z) ? (CHR_a - CHR_A) : 0);
+	return c + char((c >= CHR_A && c <= CHR_Z) ? (CHR_a - CHR_A) : char(0));
 }
 
 char uppercase(char c) {
-	return c + char((c >= CHR_a && c <= CHR_z) ? (CHR_A - CHR_a) : 0);
+	return c + char((c >= CHR_a && c <= CHR_z) ? (CHR_A - CHR_a) : char(0));
 }
 
 string lowercase(string s) {
@@ -76,7 +99,7 @@ string capitalize(string s) {
 	bool afterSpace = true;
 	for (int i = s.x; i < s.y; i++) {
 		char c = heap[i];
-		c += char((afterSpace && c >= CHR_a && c <= CHR_z) ? (CHR_A - CHR_a) : 0);
+		c += char((afterSpace && c >= CHR_a && c <= CHR_z) ? (CHR_A - CHR_a) : char(0));
 		heap[i] = c;
 		afterSpace = (c == ' ' || c == '\t' || c == '\r' || c == '\n');
 	}
@@ -140,14 +163,70 @@ string concat(string a, string b, string c, string d) {
 	return r;
 }
 
-string toString(uint i) {
+string str(uint i) {
 	int start = heapPtr;
-	if (i == 0) heap[heapPtr++] = char(CHR_0);
+	if (i == 0) heap[heapPtr++] = CHR_0;
 	while (i > 0) {
-		heap[heapPtr++] = char(CHR_0 + (i % 10));
+		heap[heapPtr++] = CHR_0 + char(i % 10);
 		i /= 10;
 	}
 	return reverse(string(start, heapPtr));
+}
+
+string str(int i) {
+	int start = heapPtr;
+	if (i < 0) heap[heapPtr++] = CHR_DASH;
+	else if (i == 0) heap[heapPtr++] = CHR_0;
+	i = abs(i);
+	while (i > 0) {
+		heap[heapPtr++] = CHR_0 + char(i % 10);
+		i /= 10;
+	}
+	return reverse(string(start, heapPtr));
+}
+
+string str(ivec2 v) {
+	int start = heapPtr;
+	_(i)_(v)_(e)_(c)_(2);
+	_w('(');
+	str(v.x);
+	_w(',');
+	str(v.y);
+	_w(')');
+	return string(start, heapPtr);
+}
+
+string str(ivec3 v) {
+	int start = heapPtr;
+	_(i)_(v)_(e)_(c)_(3);
+	_w('(');
+	str(v.x);
+	_w(',');
+	str(v.y);
+	_w(',');
+	str(v.z);
+	_w(')');
+	return string(start, heapPtr);
+}
+
+string str(ivec4 v) {
+	int start = heapPtr;
+	_(i)_(v)_(e)_(c)_(4);
+	_w('(');
+	str(v.x);
+	_w(',');
+	str(v.y);
+	_w(',');
+	str(v.z);
+	_w(',');
+	str(v.w);
+	_w(')');
+	return string(start, heapPtr);
+}
+
+string str(char c) {
+    heap[heapPtr++] = c;
+    return string(heapPtr-1, heapPtr);
 }
 
 int indexOf(string s, char c) {

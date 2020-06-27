@@ -34,10 +34,15 @@ const string stderr = string(2, 0);
 
 int errno = 0;
 
-int ioHeapStart = int(gl_GlobalInvocationID.x) * HEAP_SIZE;
+int ioHeapStart = int(ThreadID) * HEAP_SIZE;
 int ioHeapEnd = heapStart + HEAP_SIZE;
 
 int ioHeapPtr = ioHeapStart;
+
+stringArray argv = stringArray(
+    i32heap[ThreadCount * HEAP_SIZE],
+    i32heap[ThreadCount * HEAP_SIZE + 1]
+);
 
 struct io {
     int index;
@@ -61,9 +66,12 @@ string copyHeapToIO(string s) {
     return copyHeapToIO(s, ioMalloc(strLen(s)));
 }
 
+void setReturnValue(int i) {
+    ioRequests[0].status = i;
+}
+
 io requestIO(ioRequest req) {
-    int32_t reqNum = atomicAdd(ioRequests[0].ioType, 1) + 1;
-    io token = io(reqNum, req.data.x);
+    io token = io(0, req.data.x);
     if (strLen(req.filename) > 0) {
         req.filename = copyHeapToIO(req.filename);
     }
@@ -74,7 +82,9 @@ io requestIO(ioRequest req) {
         }
         req.data = b;
     }
+    int32_t reqNum = atomicAdd(ioRequests[0].ioType, 1) + 1;
     ioRequests[reqNum] = req;
+    token.index = reqNum;
     return token;
 }
 
@@ -135,7 +145,5 @@ void print(string message) {
 }
 
 void println(string message) {
-    int hp = heapPtr;
-    print(concat(message, "\n"));
-    heapPtr = hp;
+    FREE(print(concat(message, str('\n'))));
 }
