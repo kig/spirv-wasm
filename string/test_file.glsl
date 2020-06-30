@@ -4,6 +4,7 @@
 
 layout ( local_size_x = 16, local_size_y = 1, local_size_z = 1 ) in;
 
+
 bool testRead() {
     bool okShort = strEq(readSync("hello.txt", malloc(100)), "Hello, world!");
 
@@ -18,7 +19,7 @@ bool testRead() {
 
 bool testWrite() {
     string buf = malloc(100);
-    string filename = concat("write", toString(gl_GlobalInvocationID.x), ".txt");
+    string filename = concat("write", str(ThreadID), ".txt");
 
     awaitIO(createFile(filename));
     awaitIO(truncateFile(filename, 0));
@@ -35,8 +36,8 @@ bool testWrite() {
 }
 
 void printTest(bool ok, string name) {
-    if (!ok || gl_GlobalInvocationID.x == 0)
-        print(concat(toString(gl_GlobalInvocationID.x), ":", name, ok ? " successful\n" : " failed!\n"));
+    if (!ok || ThreadID == 0)
+        println(concat(str(ThreadID), ": ", name, ok ? " successful" : " failed!"));
 }
 
 #define TEST(testFn) FREE(FREE_IO(printTest(testFn(), #testFn)))

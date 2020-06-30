@@ -1,72 +1,47 @@
+#include "malloc.glsl"
+
+#define char uint8_t
 #include "chr.glsl"
 
-#define stringArray ivec2
-#define string ivec2
-#define char int8_t
-
-#define FREE(f) { int _hp_ = heapPtr; f; heapPtr = _hp_; }
+#define stringArray alloc_t
+#define string alloc_t
 
 #define _w(c) heap[heapPtr++] = char(c)
 #define _(c) heap[heapPtr++] = CHR_##c;
 
-layout(std430, binding = 0) buffer heapBuffer { char heap[]; };
-layout(std430, binding = 0) buffer iv4Buffer { i64vec4 iv4heap[]; };
-layout(std430, binding = 1) buffer i32heapBuffer { int32_t i32heap[]; };
-
-int ThreadGroupCount = int(gl_NumWorkGroups.x);
-int ThreadLocalCount = int(gl_WorkGroupSize.x);
-int ThreadCount = ThreadGroupCount * ThreadLocalCount;
-int ThreadID = int(gl_GlobalInvocationID.x);
-int ThreadGroupID = int(gl_WorkGroupID.x);
-int ThreadLocalID = int(gl_LocalInvocationID.x);
-
-int heapStart = int(ThreadID) * HEAP_SIZE;
-int heapEnd = heapStart + HEAP_SIZE;
-
-int i32HeapStart = int(ThreadID) * I32HEAP_SIZE;
-int i32HeapEnd = heapStart + I32HEAP_SIZE;
-
-int heapPtr = heapStart;
-
-int i32heapPtr = i32HeapStart;
+layout(std430, binding = 0) buffer charBuffer { char heap[]; };
 
 char toChar(int i) {
     return char(i);
 }
 
-int strLen(string str) {
+size_t strLen(string str) {
 	return str.y - str.x;
 }
 
-int arrLen(stringArray arr) {
+size_t arrLen(stringArray arr) {
     return (arr.y - arr.x) / 2;
 }
 
-string aGet(stringArray arr, int index) {
-    return string(i32heap[arr.x + index * 2], i32heap[arr.x + index * 2 + 1]);
+string aGet(stringArray arr, size_t index) {
+    return string(indexHeap[arr.x + index * 2], indexHeap[arr.x + index * 2 + 1]);
 }
 
-void aSet(stringArray arr, int index, string value) {
-    i32heap[arr.x + index * 2] = value.x;
-    i32heap[arr.x + index * 2 + 1] = value.y;
+void aSet(stringArray arr, size_t index, string value) {
+    indexHeap[arr.x + index * 2] = value.x;
+    indexHeap[arr.x + index * 2 + 1] = value.y;
 }
 
-string malloc(int len) {
-	int ptr = heapPtr;
-	heapPtr += len;
-	return string(ptr, heapPtr);
-}
-
-char getC(string s, int index) {
+char getC(string s, size_t index) {
 	return heap[s.x + index];
 }
 
-void setC(string s, int index, char value) {
+void setC(string s, size_t index, char value) {
 	heap[s.x + index] = value;
 }
 
 void strCopy(string dst, string src) {
-	for (int i = dst.x, j = src.x; i < dst.y && j < src.y; i++, j++) {
+	for (ptr_t i = dst.x, j = src.x; i < dst.y && j < src.y; i++, j++) {
 		heap[i] = heap[j];
 	}
 }
@@ -90,14 +65,14 @@ char uppercase(char c) {
 }
 
 string lowercase(string s) {
-	for (int i = s.x; i < s.y; i++) {
+	for (ptr_t i = s.x; i < s.y; i++) {
 		heap[i] = lowercase(heap[i]);
 	}
 	return s;
 }
 
 string uppercase(string s) {
-	for (int i = s.x; i < s.y; i++) {
+	for (ptr_t i = s.x; i < s.y; i++) {
 		heap[i] = uppercase(heap[i]);
 	}
 	return s;
@@ -105,7 +80,7 @@ string uppercase(string s) {
 
 string capitalize(string s) {
 	bool afterSpace = true;
-	for (int i = s.x; i < s.y; i++) {
+	for (ptr_t i = s.x; i < s.y; i++) {
 		char c = heap[i];
 		c += char((afterSpace && c >= CHR_a && c <= CHR_z) ? (CHR_A - CHR_a) : char(0));
 		heap[i] = c;
@@ -115,7 +90,7 @@ string capitalize(string s) {
 }
 
 string reverse(string s) {
-	for (int i = s.x, j = s.y-1; i < j; i++, j--) {
+	for (ptr_t i = s.x, j = s.y-1; i < j; i++, j--) {
 		char tmp = heap[i];
 		heap[i] = heap[j];
 		heap[j] = tmp;
@@ -124,19 +99,23 @@ string reverse(string s) {
 }
 
 int strCmp(string a, string b) {
-	for (int i = a.x, j = b.x; i < a.y && j < b.y; i++, j++) {
-		char d = heap[i] - heap[j];
+	for (ptr_t i = a.x, j = b.x; i < a.y && j < b.y; i++, j++) {
+		int d = int(heap[i]) - int(heap[j]);
 		if (d != 0) return d;
 	}
-	return strLen(a) - strLen(b);
+	size_t al = strLen(a);
+	size_t bl = strLen(b);
+	return al < bl ? -1 : ((al > bl) ? 1 : 0) ;
 }
 
 int strCmpI(string a, string b) {
-	for (int i = a.x, j = b.x; i < a.y && j < b.y; i++, j++) {
-		char d = lowercase(heap[i]) - lowercase(heap[j]);
+	for (ptr_t i = a.x, j = b.x; i < a.y && j < b.y; i++, j++) {
+		int d = int(lowercase(heap[i])) - int(lowercase(heap[j]));
 		if (d != 0) return d;
 	}
-	return strLen(a) - strLen(b);
+	size_t al = strLen(a);
+	size_t bl = strLen(b);
+	return al < bl ? -1 : ((al > bl) ? 1 : 0) ;
 }
 
 bool strEq(string a, string b) {
@@ -150,29 +129,29 @@ bool strEqI(string a, string b) {
 string concat(string a, string b) {
 	string c = malloc(strLen(a) + strLen(b));
 	strCopy(c, a);
-	strCopy(c + ivec2(strLen(a), 0), b);
+	strCopy(c + string(strLen(a), 0), b);
 	return c;
 }
 
 string concat(string a, string b, string c) {
 	string r = malloc(strLen(a) + strLen(b) + strLen(c));
 	strCopy(r, a);
-	strCopy(r + ivec2(strLen(a), 0), b);
-	strCopy(r + ivec2(strLen(a)+strLen(b), 0), c);
+	strCopy(r + string(strLen(a), 0), b);
+	strCopy(r + string(strLen(a)+strLen(b), 0), c);
 	return r;
 }
 
 string concat(string a, string b, string c, string d) {
 	string r = malloc(strLen(a) + strLen(b) + strLen(c) + strLen(d));
 	strCopy(r, a);
-	strCopy(r + ivec2(strLen(a), 0), b);
-	strCopy(r + ivec2(strLen(a)+strLen(b), 0), c);
-	strCopy(r + ivec2(strLen(a)+strLen(b)+strLen(c), 0), d);
+	strCopy(r + string(strLen(a), 0), b);
+	strCopy(r + string(strLen(a)+strLen(b), 0), c);
+	strCopy(r + string(strLen(a)+strLen(b)+strLen(c), 0), d);
 	return r;
 }
 
 string str(uint i) {
-	int start = heapPtr;
+	ptr_t start = heapPtr;
 	if (i == 0) heap[heapPtr++] = CHR_0;
 	while (i > 0) {
 		heap[heapPtr++] = CHR_0 + char(i % 10);
@@ -182,7 +161,7 @@ string str(uint i) {
 }
 
 string str(int i) {
-	int start = heapPtr;
+	ptr_t start = heapPtr;
 	if (i < 0) heap[heapPtr++] = CHR_DASH;
 	else if (i == 0) heap[heapPtr++] = CHR_0;
 	i = abs(i);
@@ -193,8 +172,8 @@ string str(int i) {
 	return reverse(string(start, heapPtr));
 }
 
-string str(ivec2 v) {
-	int start = heapPtr;
+string str(string v) {
+	ptr_t start = heapPtr;
 	_(i)_(v)_(e)_(c)_(2);
 	_w('(');
 	str(v.x);
@@ -205,7 +184,7 @@ string str(ivec2 v) {
 }
 
 string str(ivec3 v) {
-	int start = heapPtr;
+	ptr_t start = heapPtr;
 	_(i)_(v)_(e)_(c)_(3);
 	_w('(');
 	str(v.x);
@@ -218,7 +197,7 @@ string str(ivec3 v) {
 }
 
 string str(ivec4 v) {
-	int start = heapPtr;
+	ptr_t start = heapPtr;
 	_(i)_(v)_(e)_(c)_(4);
 	_w('(');
 	str(v.x);
@@ -238,26 +217,26 @@ string str(char c) {
 }
 
 
-int indexOf(string s, char c) {
-	for (int i = s.x; i < s.y; i++) {
+size_t indexOf(string s, char c) {
+	for (ptr_t i = s.x; i < s.y; i++) {
 		if (heap[i] == c) return i - s.x;
 	}
 	return -1;
 }
 
-int indexOfI(string s, char c) {
-	int lc = lowercase(c);
-	for (int i = s.x; i < s.y; i++) {
+size_t indexOfI(string s, char c) {
+	char lc = lowercase(c);
+	for (ptr_t i = s.x; i < s.y; i++) {
 		if (lowercase(heap[i]) == lc) return i - s.x;
 	}
 	return -1;
 }
 
-int indexOf(string s, string key) {
-	int len = strLen(key);
+size_t indexOf(string s, string key) {
+	size_t len = strLen(key);
 	if (len == 0) return 0;
 	if (len < 0) return -1;
-	for (int i = s.x; i <= s.y-len; i++) {
+	for (ptr_t i = s.x; i <= s.y-len; i++) {
 		if (heap[i] == heap[key.x]) {
 			if (strCmp(string(i, i+len), key) == 0) {
 				return i - s.x;
@@ -267,11 +246,11 @@ int indexOf(string s, string key) {
 	return -1;
 }
 
-int indexOfI(string s, string key) {
-	int len = strLen(key);
+size_t indexOfI(string s, string key) {
+	size_t len = strLen(key);
 	if (len == 0) return 0;
 	if (len < 0) return -1;
-	for (int i = s.x; i <= s.y-len; i++) {
+	for (ptr_t i = s.x; i <= s.y-len; i++) {
 		if (lowercase(heap[i]) == lowercase(heap[key.x])) {
 			if (strCmpI(string(i, i+len), key) == 0) {
 				return i - s.x;
@@ -281,18 +260,18 @@ int indexOfI(string s, string key) {
 	return -1;
 }
 
-int lastIndexOf(string s, char c) {
-	for (int i = s.y-1; i >= s.x; i--) {
+size_t lastIndexOf(string s, char c) {
+	for (ptr_t i = s.y-1; i >= s.x; i--) {
 		if (heap[i] == c) return i - s.x;
 	}
 	return -1;
 }
 
-int lastIndexOf(string s, string key) {
-	int len = strLen(key);
+size_t lastIndexOf(string s, string key) {
+	size_t len = strLen(key);
 	if (len == 0) return strLen(s);
 	if (len < 0) return -1;
-	for (int i = s.y-len; i >= s.x; i--) {
+	for (ptr_t i = s.y-len; i >= s.x; i--) {
 		if (strCmp(string(i, i+len), key) == 0) {
 			return i - s.x;
 		}
@@ -300,19 +279,19 @@ int lastIndexOf(string s, string key) {
 	return -1;
 }
 
-int lastIndexOfI(string s, char c) {
-	int lc = lowercase(c);
-	for (int i = s.y-1; i >= s.x; i--) {
+size_t lastIndexOfI(string s, char c) {
+	char lc = lowercase(c);
+	for (ptr_t i = s.y-1; i >= s.x; i--) {
 		if (lowercase(heap[i]) == lc) return i - s.x;
 	}
 	return -1;
 }
 
-int lastIndexOfI(string s, string key) {
-	int len = strLen(key);
+size_t lastIndexOfI(string s, string key) {
+	size_t len = strLen(key);
 	if (len == 0) return strLen(s);
 	if (len < 0) return -1;
-	for (int i = s.y-len; i >= s.x; i--) {
+	for (ptr_t i = s.y-len; i >= s.x; i--) {
 		if (strCmpI(string(i, i+len), key) == 0) {
 			return i - s.x;
 		}
@@ -320,35 +299,35 @@ int lastIndexOfI(string s, string key) {
 	return -1;
 }
 
-int normalizeIndex(int i, int len) {
+size_t normalizeIndex(size_t i, size_t len) {
 	return clamp((i < 0) ? i + len : i, 0, len - 1);
 }
 
-string slice(string s, int start, int end) {
-	int len = strLen(s);
+string slice(string s, size_t start, size_t end) {
+	size_t len = strLen(s);
 	start = normalizeIndex(start, len);
 	end = normalizeIndex(end, len);
 	return string(s.x + start, s.x + end);
 }
 
-string slice(string s, int start) {
-	int len = strLen(s);
+string slice(string s, size_t start) {
+	size_t len = strLen(s);
 	start = normalizeIndex(start, len);
 	return string(s.x + start, s.y);
 }
 
-ivec4 splitOnce(string s, char separator) {
-	int idx = indexOf(s, separator);
-	ivec4 pair;
+pair_t splitOnce(string s, char separator) {
+	size_t idx = indexOf(s, separator);
+	pair_t pair;
 	if (idx < 0) idx = s.y - s.x;
 	pair.xy = string(s.x, s.x + idx);
 	pair.zw = string(s.x + idx + 1, s.y);
 	return pair;
 }
 
-ivec4 splitOnce(string s, string separator) {
-	int idx = indexOf(s, separator);
-	ivec4 pair;
+pair_t splitOnce(string s, string separator) {
+	size_t idx = indexOf(s, separator);
+	pair_t pair;
 	if (idx < 0) idx = s.y - s.x;
 	pair.xy = string(s.x, s.x + idx);
 	pair.zw = string(s.x + idx + strLen(separator), s.y);
@@ -356,35 +335,39 @@ ivec4 splitOnce(string s, string separator) {
 }
 
 stringArray split(string s, char separator) {
-	int start = i32heapPtr;
+	ptr_t start = toIndexPtr(heapPtr);
+	ptr_t p = start;
 	string rest = s;
 	while (strLen(rest) >= 0) {
-		ivec4 pair = splitOnce(rest, separator);
+		pair_t pair = splitOnce(rest, separator);
 		rest = pair.zw;
-		i32heap[i32heapPtr++] = pair.x;
-		i32heap[i32heapPtr++] = pair.y;
+		indexHeap[p++] = pair.x;
+		indexHeap[p++] = pair.y;
 	}
-	return stringArray(start, i32heapPtr);
+	heapPtr = p * INDEX_SIZE;
+	return stringArray(start, p);
 }
 
 stringArray split(string s, string separator) {
-	int start = i32heapPtr;
+	ptr_t start = toIndexPtr(heapPtr);
+	ptr_t p = start;
 	string rest = s;
 	while (strLen(rest) >= 0) {
-		ivec4 pair = splitOnce(rest, separator);
+		pair_t pair = splitOnce(rest, separator);
 		rest = pair.zw;
-		i32heap[i32heapPtr++] = pair.x;
-		i32heap[i32heapPtr++] = pair.y;
+		indexHeap[p++] = pair.x;
+		indexHeap[p++] = pair.y;
 	}
-	return stringArray(start, i32heapPtr);
+	heapPtr = p * INDEX_SIZE;
+	return stringArray(start, p);
 }
 
 string join(stringArray a, string joiner) {
-	int start = heapPtr;
-	int joinerLen = strLen(joiner);
-	for (int i = a.x; i < a.y-2; i += 2) {
-		string str = string(i32heap[i], i32heap[i+1]);
-		int len = strLen(str);
+	ptr_t start = heapPtr;
+	size_t joinerLen = strLen(joiner);
+	for (ptr_t i = a.x; i < a.y-2; i += 2) {
+		string str = string(indexHeap[i], indexHeap[i+1]);
+		size_t len = strLen(str);
 		strCopy(string(heapPtr, heapPtr+len), str);
 		heapPtr += len;
 		len = joinerLen;
@@ -392,8 +375,8 @@ string join(stringArray a, string joiner) {
 		heapPtr += len;
 	}
 	if (a.y > a.x) {
-		string str = string(i32heap[a.y-2], i32heap[a.y-1]);
-		int len = strLen(str);
+		string str = string(indexHeap[a.y-2], indexHeap[a.y-1]);
+		size_t len = strLen(str);
 		strCopy(string(heapPtr, heapPtr+len), str);
 		heapPtr += len;
 	}
@@ -401,31 +384,31 @@ string join(stringArray a, string joiner) {
 }
 
 string join(stringArray a, char joiner) {
-	int start = heapPtr;
-	for (int i = a.x; i < a.y-2; i += 2) {
-		string str = string(i32heap[i], i32heap[i+1]);
-		int len = strLen(str);
+	ptr_t start = heapPtr;
+	for (ptr_t i = a.x; i < a.y-2; i += 2) {
+		string str = string(indexHeap[i], indexHeap[i+1]);
+		size_t len = strLen(str);
 		strCopy(string(heapPtr, heapPtr+len), str);
 		heapPtr += len;
 		heap[heapPtr] = joiner;
 		heapPtr += 1;
 	}
 	if (a.y > a.x) {
-		string str = string(i32heap[a.y-2], i32heap[a.y-1]);
-		int len = strLen(str);
+		string str = string(indexHeap[a.y-2], indexHeap[a.y-1]);
+		size_t len = strLen(str);
 		strCopy(string(heapPtr, heapPtr+len), str);
 		heapPtr += len;
 	}
 	return string(start, heapPtr);
 }
 
-string join(ivec4 pair, string joiner) {
-	int zwLen = strLen(pair.zw);
+string join(pair_t pair, string joiner) {
+	size_t zwLen = strLen(pair.zw);
 	if (zwLen < 0) {
 		return pair.xy;
 	}
-	int xyLen = strLen(pair.xy);
-	int joinerLen = strLen(joiner);
+	size_t xyLen = strLen(pair.xy);
+	size_t joinerLen = strLen(joiner);
 	string s = malloc(xyLen + joinerLen + zwLen);
 	strCopy(s, pair.xy);
 	strCopy(string(s.x + xyLen, s.y), joiner);
@@ -433,13 +416,13 @@ string join(ivec4 pair, string joiner) {
 	return s;
 }
 
-string join(ivec4 pair, char joiner) {
-	int zwLen = strLen(pair.zw);
+string join(pair_t pair, char joiner) {
+	size_t zwLen = strLen(pair.zw);
 	if (zwLen < 0) {
 		return pair.xy;
 	}
-	int xyLen = strLen(pair.xy);
-	int joinerLen = 1;
+	size_t xyLen = strLen(pair.xy);
+	size_t joinerLen = 1;
 	string s = malloc(xyLen + joinerLen + zwLen);
 	strCopy(s, pair.xy);
 	heap[s.x + xyLen] = joiner;
@@ -448,13 +431,13 @@ string join(ivec4 pair, char joiner) {
 }
 
 string replaceOnce(string s, string pattern, string replacement) {
-	int ptr = heapPtr;
-	ivec4 pair = splitOnce(s, pattern);
+	ptr_t ptr = heapPtr;
+    pair_t pair = splitOnce(s, pattern);
 	return join(pair, replacement);
 }
 
 string replace(string s, string pattern, string replacement) {
-	int ptr = heapPtr;
+	ptr_t ptr = heapPtr;
 	stringArray a = split(s, pattern);
 	string res = join(a, replacement);
 	
@@ -464,55 +447,55 @@ string replace(string s, string pattern, string replacement) {
 	return moved;
 }
 
-string repeat(char c, int count) {
+string repeat(char c, size_t count) {
 	count = max(0, count);
 	string s = malloc(count);
-	for (int i = s.x; i < s.y; i++) {
+	for (ptr_t i = s.x; i < s.y; i++) {
 		heap[i] = c;
 	}
 	return s;
 }
 
-string repeat(string pattern, int count) {
+string repeat(string pattern, size_t count) {
 	count = max(0, count);
-	int len = strLen(pattern);
+	size_t len = strLen(pattern);
 	string s = malloc(count * len);
-	for (int i = s.x; i < s.y; i += len) {
+	for (ptr_t i = s.x; i < s.y; i += len) {
 		strCopy(string(i, s.y), pattern);
 	}
 	return s;
 } 
 
-string padStart(string s, int len, char filler) {
+string padStart(string s, size_t len, char filler) {
 	len = max(0, len);
-	int slen = max(0, strLen(s));
-	int diff = len - slen;
+	size_t slen = max(0, strLen(s));
+	size_t diff = len - slen;
 	string res = malloc(max(slen, len));
-	for (int i = 0; i < diff; i++) {
+	for (ptr_t i = 0; i < diff; i++) {
 		setC(res, i, filler);
 	}
-	strCopy(res + ivec2(max(0,diff), 0), s);
+	strCopy(res + string(max(0,diff), 0), s);
 	return res;
 }
 
-string padEnd(string s, int len, char filler) {
+string padEnd(string s, size_t len, char filler) {
 	len = max(0, len);
-	int slen = max(0, strLen(s));
-	int diff = len - slen;
+	size_t slen = max(0, strLen(s));
+	size_t diff = len - slen;
 	string res = malloc(max(slen, len));
-	for (int i = 0; i < diff; i++) {
+	for (ptr_t i = 0; i < diff; i++) {
 		setC(res, slen+i, filler);
 	}
 	strCopy(res, s);
 	return res;
 }
 
-string truncate(string s, int maxLen) {
+string truncate(string s, size_t maxLen) {
 	maxLen = max(0, maxLen);
 	return string(s.x, s.x + min(maxLen, max(0, strLen(s))));
 }
 
-string truncateEnd(string s, int maxLen) {
+string truncateEnd(string s, size_t maxLen) {
 	maxLen = max(0, maxLen);
 	return string(s.x + max(0, max(0, strLen(s)) - maxLen), s.y);
 }
@@ -530,7 +513,7 @@ bool includes(string s, string key) {
 }
 
 string trimStart(string s) {
-	for (int i = s.x; i < s.y; i++) {
+	for (ptr_t i = s.x; i < s.y; i++) {
 		char c = heap[i];
 		if (isWhitespace(c)) {
 			s.x++;
@@ -542,7 +525,7 @@ string trimStart(string s) {
 }
 
 string trimEnd(string s) {
-	for (int i = s.y-1; i >= s.x; i--) {
+	for (ptr_t i = s.y-1; i >= s.x; i--) {
 		char c = heap[i];
 		if (isWhitespace(c)) {
 			s.y--;

@@ -3,15 +3,29 @@
 struct ioRequest {
     int32_t ioType;
     int32_t status;
-    int32_t offset;
-    int32_t count;
+    int64_t offset;
+    int64_t count;
     i32vec2 filename;
     i32vec2 data;
 };
 
-layout(std430, binding = 2) volatile buffer ioBuffer { ioRequest ioRequests[]; };
-layout(std430, binding = 3) volatile buffer ioBytes { char ioHeap[]; };
-layout(std430, binding = 3) volatile buffer iv4IOBytes { i64vec4 iv4IOHeap[]; };
+layout(std430, binding = 1) volatile buffer ioRequestsBuffer {
+    int32_t ioCount;
+    int32_t programReturnValue;
+    int32_t maxIOCount;
+    int32_t io_pad_3;
+    int32_t io_pad_4;
+    int32_t io_pad_5;
+    int32_t io_pad_6;
+    int32_t io_pad_7;
+    int32_t io_pad_8;
+    int32_t io_pad_9;
+
+    ioRequest ioRequests[]; 
+};
+
+layout(std430, binding = 2) volatile buffer ioHeapBuffer { char ioHeap[]; };
+layout(std430, binding = 2) volatile buffer i64v4IOBuffer { i64vec4 i64v4IOHeap[]; };
 
 #define IO_READ 1
 #define IO_WRITE 2
@@ -27,94 +41,106 @@ layout(std430, binding = 3) volatile buffer iv4IOBytes { i64vec4 iv4IOHeap[]; };
 #define IO_ERROR 5
 #define IO_HANDLED 255
 
-#define FREE_IO(f) { int _ihp_ = ioHeapPtr; f; ioHeapPtr = _ihp_; }
+#define FREE_IO(f) { ptr_t _ihp_ = ioHeapPtr; f; ioHeapPtr = _ihp_; }
 
 const string stdin = string(0, 0);
 const string stdout = string(1, 0);
 const string stderr = string(2, 0);
 
-int errno = 0;
+int32_t errno = 0;
 
-int ioHeapStart = int(ThreadID) * HEAP_SIZE;
-int ioHeapEnd = heapStart + HEAP_SIZE;
+ptr_t ioHeapStart = ThreadID * HEAP_SIZE;
+ptr_t ioHeapEnd = heapStart + HEAP_SIZE;
 
-int ioHeapPtr = ioHeapStart;
+ptr_t ioHeapPtr = ioHeapStart;
 
 stringArray argv = stringArray(
-    i32heap[ThreadCount * I32HEAP_SIZE],
-    i32heap[ThreadCount * I32HEAP_SIZE + 1]
+    i32heap[ThreadCount * HEAP_SIZE/4],
+    i32heap[ThreadCount * HEAP_SIZE/4 + 1]
 );
 
 struct io {
-    int index;
-    int heapBufStart;
+    int32_t index;
+    ptr_t heapBufStart;
 };
 
-string ioMalloc(int len) {
-    int ptr = ioHeapPtr;
-    ioHeapPtr += ((len+31) / 32) * 32;
-    return string(ptr, ioHeapPtr);
+alloc_t ioMalloc(size_t len) {
+    ptr_t ptr = ((ioHeapPtr+31) / 32) * 32;
+    ioHeapPtr = ptr + ((len+31) / 32) * 32;
+    return string(ptr, ptr + len);
 }
 
-string copyHeapToIO(string s, string b) {
-    for (int i = s.x, x = b.x; x < b.y && i < s.y; x++, i++) {
+alloc_t copyHeapToIO(alloc_t s, alloc_t b) {
+    for (ptr_t i = s.x, x = b.x; x < b.y && i < s.y; x++, i++) {
         ioHeap[x] = heap[i];
     }
     return b;
 }
 
-string copyHeapToIO(string s) {
-    return copyHeapToIO(s, ioMalloc(strLen(s)));
+alloc_t copyHeapToIO(alloc_t s) {
+    return copyHeapToIO(s, ioMalloc(allocSize(s)));
 }
 
-void setReturnValue(int i) {
-    ioRequests[0].status = i;
+void setReturnValue(int32_t i) {
+    programReturnValue = i;
 }
 
-io requestIO(ioRequest req) {
-    io token = io(0, req.data.x);
-    if (strLen(req.filename) > 0) {
-        req.filename = copyHeapToIO(req.filename);
+io requestIO(ioRequest request) {
+    io token = io(0, request.data.x);
+    if (strLen(request.filename) > 0) {
+        request.filename = copyHeapToIO(request.filename);
     }
-    if (req.count > 0) {
-        string b = ioMalloc(req.count);
-        if (req.ioType == IO_WRITE) {
-            copyHeapToIO(req.data, b);
+    if (request.count > 0) {
+        string b = ioMalloc(int32_t(request.count));
+        if (request.ioType == IO_WRITE) {
+            copyHeapToIO(request.data, b);
         }
-        req.data = b;
+        request.data = b;
     }
-    int32_t reqNum = atomicAdd(ioRequests[0].ioType, 1) + 1;
-    ioRequests[reqNum] = req;
+    int32_t reqNum = atomicAdd(ioCount, 1); // % maxIOCount;
+    ioRequests[reqNum] = request;
     token.index = reqNum;
     return token;
 }
 
-string awaitIO(io reqNum, inout int status) {
-    if (ioRequests[reqNum.index].status != IO_NONE && ioRequests[reqNum.index].status < IO_COMPLETE) {
-        while (ioRequests[reqNum.index].status < IO_COMPLETE) {
-//            for (int i = 0; i < 1000; i++) status = i; // wait for a ~microsecond
+alloc_t awaitIO(io request, inout int32_t status, bool noCopy) {
+    if (ioRequests[request.index].status != IO_NONE && ioRequests[request.index].status < IO_COMPLETE) {
+        while (ioRequests[request.index].status < IO_COMPLETE);
+    }
+    ioRequest req = ioRequests[request.index];
+    status = req.status;
+
+    if (noCopy) {
+        ioRequests[request.index].status = IO_HANDLED;
+        return req.data;
+    }
+
+    alloc_t s = alloc_t(request.heapBufStart, request.heapBufStart + strLen(req.data));
+
+    ptr_t i = s.x, x = req.data.x, y = req.data.y;
+
+    if (i % 32 == 0) {
+        for (; i < s.y - 31 && x < y; x+=32, i+=32) {
+            i64v4heap[i/32] = i64v4IOHeap[x/32];
         }
     }
-    ioRequest req = ioRequests[reqNum.index];
-    status = 0 * status + req.status;
-    ioRequests[reqNum.index].status = IO_HANDLED;
+    for (; i < s.y && x < req.data.y; x++, i++) {
+        heap[i] = ioHeap[x];
+    }
+    ioRequests[request.index].status = IO_HANDLED;
 
-    string s = string(reqNum.heapBufStart, reqNum.heapBufStart + strLen(req.data));
-    int i = s.x, x = req.data.x, y = req.data.y;
-    for (; i < s.y - 31 && x < y; x+=32, i+=32) {
-        iv4heap[i/32] = iv4IOHeap[x/32];
-    }
-    for (; i < s.x && x < y; x++, i++) {
-        heap[i] = ioHeap[i];
-    }
     return s;
 }
 
-string awaitIO(io reqNum) {
-    return awaitIO(reqNum, errno);
+alloc_t awaitIO(io request, inout int32_t status) {
+    return awaitIO(request, status, false);
 }
 
-io read(string filename, int offset, int count, string buf) {
+alloc_t awaitIO(io request) {
+    return awaitIO(request, errno);
+}
+
+io read(string filename, size_t offset, size_t count, string buf) {
     return requestIO(ioRequest(IO_READ, IO_START, offset, min(count, strLen(buf)), filename, buf));
 }
 
@@ -122,7 +148,7 @@ io read(string filename, string buf) {
     return read(filename, 0, strLen(buf), buf);
 }
 
-io write(string filename, int offset, int count, string buf) {
+io write(string filename, size_t offset, size_t count, string buf) {
     return requestIO(ioRequest(IO_WRITE, IO_START, offset, min(count, strLen(buf)), filename, buf));
 }
 
@@ -130,7 +156,7 @@ io write(string filename, string buf) {
     return write(filename, 0, strLen(buf), buf);
 }
 
-io truncateFile(string filename, int count) {
+io truncateFile(string filename, size_t count) {
     return requestIO(ioRequest(IO_TRUNCATE, IO_START, 0, count, filename, string(0,0)));
 }
 
@@ -142,11 +168,11 @@ io createFile(string filename) {
     return requestIO(ioRequest(IO_CREATE, IO_START, 0, 0, filename, string(0,0)));
 }
 
-string readSync(string filename, int offset, int count, string buf) { return awaitIO(read(filename, offset, count, buf)); }
-string readSync(string filename, string buf) { return awaitIO(read(filename, buf)); }
+alloc_t readSync(string filename, size_t offset, size_t count, string buf) { return awaitIO(read(filename, offset, count, buf)); }
+alloc_t readSync(string filename, string buf) { return awaitIO(read(filename, buf)); }
 
-string writeSync(string filename, int offset, int count, string buf) { return awaitIO(write(filename, offset, count, buf)); }
-string writeSync(string filename, string buf) { return awaitIO(write(filename, buf)); }
+alloc_t writeSync(string filename, size_t offset, size_t count, string buf) { return awaitIO(write(filename, offset, count, buf)); }
+alloc_t writeSync(string filename, string buf) { return awaitIO(write(filename, buf)); }
 
 void print(string message) {
     FREE_IO(awaitIO(write(stdout, -1, strLen(message), message)));

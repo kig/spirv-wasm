@@ -1,6 +1,6 @@
 #define HEAP_SIZE 8192
 
-layout ( local_size_x = 1, local_size_y = 1, local_size_z = 1 ) in;
+layout ( local_size_x = 200, local_size_y = 1, local_size_z = 1 ) in;
 
 layout(std430, binding = 1) buffer outputBuffer { int32_t outputs[]; };
 
@@ -10,19 +10,20 @@ layout(std430, binding = 1) buffer outputBuffer { int32_t outputs[]; };
 
 void main() {
 	initGlobals();
-	int heapTop = heapPtr;
+
+	ptr_t heapTop = heapPtr;
 	
-	int op = int(gl_GlobalInvocationID.x) * 1024;
+	ptr_t op = ThreadID * 1024;
 
 	string emptys = "";
 
 	string s = malloc(10);
-	int len = strLen(s);
-	for (int i = 0; i < len; i++) {
+	size_t len = strLen(s);
+	for (size_t i = 0; i < len; i++) {
 		setC(s, i, CHR_A + char(i));
 	}
 	string t = malloc(10);
-	for (int i = 0; i < len; i++) {
+	for (size_t i = 0; i < len; i++) {
 		setC(t, i, lowercase(getC(s, i)));
 	}
 	string c = concat(s, t);
@@ -32,7 +33,7 @@ void main() {
 	outputs[op++] = indexOf(c, "a") == 10 ? 1 : -1; // 3
 	outputs[op++] = indexOfI(c, "x") == -1 ? 1 : -1; // 4
 	outputs[op++] = indexOfI(c, "a") == 0 ? 1 : -1; // 5
-	
+
 	outputs[op++] = indexOf(c, "EFG") == 4 ? 1 : -1;
 	outputs[op++] = indexOf(c, "EFH") == -1 ? 1 : -1;
 	outputs[op++] = indexOf(c, "ABCD") == 0 ? 1 : -1;
@@ -52,31 +53,32 @@ void main() {
 	
 	string csv = ",a,b,,xxx,z,,";
 	{
-	ivec4 pair = splitOnce(csv, ",");
+	pair_t pair = splitOnce(csv, ",");
 	outputs[op++] = strLen(pair.xy) == 0 ? 1 : -1;
 	outputs[op++] = strCmp(pair.zw, slice(csv, 1)) == 0 ? 1 : -1; // 20
 	}
 	{
-	ivec4 pair = splitOnce(csv, "z,,");
+	pair_t pair = splitOnce(csv, "z,,");
 	outputs[op++] = strLen(pair.zw) == 0 ? 1 : -1;
 	outputs[op++] = strCmp(pair.xy, ",a,b,,xxx,") == 0 ? 1 : -1; // 22
 	}
 	{
-	ivec4 pair = splitOnce(csv, ",,,");
+	pair_t pair = splitOnce(csv, ",,,");
 	outputs[op++] = strLen(pair.zw) < 0 ? 1 : -1;
 	outputs[op++] = strCmp(pair.xy, csv) == 0 ? 1 : -1; // 24
 	}
 	{
-	ivec4 pair = splitOnce(csv, '.');
+	pair_t pair = splitOnce(csv, '.');
 	outputs[op++] = strLen(pair.zw) < 0 ? 1 : -1;
 	outputs[op++] = strCmp(pair.xy, csv) == 0 ? 1 : -1; // 26
 	}
 	{
-	ivec4 pair = splitOnce(csv, ',');
+	pair_t pair = splitOnce(csv, ',');
 	outputs[op++] = strLen(pair.xy) == 0 ? 1 : -1;
 	outputs[op++] = strCmp(pair.zw, slice(csv, 1)) == 0 ? 1 : -1;
 	outputs[op++] = strCmp(pair.zw, "a,b,,xxx,z,,") == 0 ? 1 : -1; // 29
 	}
+
 	stringArray s0 = split(csv, ',');
 	stringArray s1 = split(csv, ",");
 	stringArray s2 = split(csv, ",,");
@@ -92,6 +94,7 @@ void main() {
 	strCmp(csv2, "wooawoobwoowooxxxwoozwoowoo") == 0 ? 1 : -1;
 	outputs[op++] = 
 	strCmp(csv3, ",a,bbarxxx,zbar") == 0 ? 1 : -1; // 33
+
 
 	outputs[op++] = 
 	strCmp(join(splitOnce("a,b", ','), ','), "a,b") == 0 ? 1 : -1;
@@ -136,7 +139,7 @@ void main() {
 
 	string r0 = replace("<h1>Hi</h1>", "h1", "span");
 	outputs[op++] = 
-	strCmp(r0, "<span>Hi</span>") == 0 ? 1 : heapPtr; // 59
+	strCmp(r0, "<span>Hi</span>") == 0 ? 1 : -1; // 59
 
 	string trims = " \t\nhi  \r\n  \t  ";
 	outputs[op++] = strCmp(trimStart(trims), slice(trims, 3)) == 0 ? 1 : -1; // 60
@@ -304,5 +307,4 @@ void main() {
 	outputs[op++] = strCmpI("aBcD", "AbCd") == 0 ? 1 : -1;
 	outputs[op++] = strCmpI("", "aBc") < 0 ? 1 : -1; // 190
 	outputs[op++] = strCmpI("aBc", "") > 0 ? 1 : -1; // 191
-
 }

@@ -1,7 +1,6 @@
 layout ( local_size_x = 255, local_size_y = 1, local_size_z = 1 ) in;
 
 #define HEAP_SIZE 4096
-#define I32HEAP_SIZE 256
 
 #include "file.glsl"
 
@@ -11,16 +10,16 @@ shared string wgBuf;
 
 bool grepBuffer(int blockSize, string buf, string pattern, char p, int wgOff) {
     bool found = false;
-    for (int i = 0, l = strLen(buf); i < blockSize; i+=32) {
-        int idx = buf.x + i;
-        i64vec4 v = iv4heap[idx / 32];
-        for (int j = 0, k = i, jdx = idx; j < 64; j += 8, idx++, k++, jdx++) {
+    for (size_t i = 0, l = strLen(buf); i < blockSize; i+=32) {
+        ptr_t idx = buf.x + i;
+        i64vec4 v = i64v4heap[idx / 32];
+        for (size_t j = 0, k = i, jdx = idx; j < 64; j += 8, idx++, k++, jdx++) {
             i8vec4 u = i8vec4((v >> j) & 0xff);
             if (any(equal(u, i8vec4(p)))) {
-                if (k < l && p == u.x && startsWith(string(jdx, buf.y), pattern)) { i32heap[i32heapPtr++] = int32_t(k); found = true;  }
-                if (k+8 < l && p == u.y && startsWith(string(jdx+8, buf.y), pattern)) { i32heap[i32heapPtr++] = int32_t(k + 8); found = true;  }
-                if (k+16 < l && p == u.z && startsWith(string(jdx+16, buf.y), pattern)) { i32heap[i32heapPtr++] = int32_t(k + 16); found = true;  }
-                if (k+24 < l && p == u.w && startsWith(string(jdx+24, buf.y), pattern)) { i32heap[i32heapPtr++] = int32_t(k + 24); found = true;  }
+                if (k < l && p == u.x && startsWith(string(jdx, buf.y), pattern)) { i32heap[heapPtr/4] = int32_t(k); heapPtr+=4; found = true;  }
+                if (k+8 < l && p == u.y && startsWith(string(jdx+8, buf.y), pattern)) { i32heap[heapPtr/4] = int32_t(k + 8); heapPtr+=4; found = true;  }
+                if (k+16 < l && p == u.z && startsWith(string(jdx+16, buf.y), pattern)) { i32heap[heapPtr/4] = int32_t(k + 16); heapPtr+=4; found = true;  }
+                if (k+24 < l && p == u.w && startsWith(string(jdx+24, buf.y), pattern)) { i32heap[heapPtr/4] = int32_t(k + 24); heapPtr+=4; found = true;  }
             }
         }
     }
@@ -34,20 +33,21 @@ void main() {
     string filename = aGet(argv, 2);
 
     if (ThreadID == 0) {
-    /*
         FREE(
             println(concat("Searching for pattern ", pattern));
             println(concat("In file ", filename));
+        )
+        /*
             println(concat("Thread count ", str(ThreadCount)));
             println(concat("Thread groups ", str(ThreadGroupCount)));
             println(concat("Local thread count ", str(ThreadLocalCount)));
             println(concat("Total heap ", str(ThreadCount * HEAP_SIZE)));
             println(concat("IO size ", str(ThreadLocalCount * HEAP_SIZE)));
         )
-        atomicAdd(ioRequests[0].status, 1);
-    */
+        */
+        atomicAdd(programReturnValue, 1);
     }
-    while(ioRequests[0].status == 0);
+    while(programReturnValue == 0);
 
     int patternLength = strLen(pattern);
     int blockSize = HEAP_SIZE-(((patternLength+31) / 32) * 32);
@@ -63,7 +63,7 @@ void main() {
     }
 
     bool found = false;
-    int startp = i32heapPtr;
+    int startp = toIndexPtr(heapPtr);
 
     char p = heap[pattern.x];
 
@@ -94,7 +94,9 @@ void main() {
                 
                 //if (wgOff > 1000000000) wgBuf.y = wgBuf.x;
 
-                if (strLen(wgBuf) != wgBufSize) atomicAdd(done, strLen(wgBuf) == 0 ? 2 : 1);
+                if (strLen(wgBuf) != wgBufSize) {
+                    done = strLen(wgBuf) == 0 ? 2 : 1;
+                }
             }
 
             barrier();
@@ -108,16 +110,15 @@ void main() {
             );
 
             int start = startp;
-            i32heapPtr = startp;
+            heapPtr = startp * 4;
 
             found = grepBuffer(blockSize, buf, pattern, p, wgOff) || found;
 
-            int end = i32heapPtr;
+            int end = heapPtr / 4;
 
             barrier();
             memoryBarrier();
 
-            heapPtr = buf.x;
             for (int j = start; j < end; j++) {
                 str(uint(i32heap[j] + ThreadLocalID * blockSize + wgOff));
                 _w('\n');
@@ -126,18 +127,18 @@ void main() {
             barrier();
             memoryBarrier();
 
-            if (buf.x != heapPtr) print(string(buf.x, heapPtr));
+            if (end * 4 != heapPtr) print(string(end*4, heapPtr));
 
             barrier();
             memoryBarrier();
 
             if (ThreadLocalID == 0) {
-                atomicMax(ioRequests[0].offset, wgOff + strLen(wgBuf));
+                // atomicMax(io_pad_3, wgOff + strLen(wgBuf));
                 wgOff += ThreadCount * blockSize;
             }
         ))
     }
 
-    atomicMin(ioRequests[0].status, found ? 0 : 1);
+    atomicMin(programReturnValue, found ? 0 : 1);
 }
 

@@ -35,6 +35,28 @@ const bool enableValidationLayers = true;
         }                                                                                 \
     }
 
+template<typename MainT, typename NewT>
+inline void PnextChainPushFront(MainT* mainStruct, NewT* newStruct)
+{
+    newStruct->pNext = mainStruct->pNext;
+    mainStruct->pNext = newStruct;
+}
+template<typename MainT, typename NewT>
+inline void PnextChainPushBack(MainT* mainStruct, NewT* newStruct)
+{
+    struct VkAnyStruct
+    {
+        VkStructureType sType;
+        void* pNext;
+    };
+    VkAnyStruct* lastStruct = (VkAnyStruct*)mainStruct;
+    while(lastStruct->pNext != nullptr)
+    {
+        lastStruct = (VkAnyStruct*)lastStruct->pNext;
+    }
+    newStruct->pNext = nullptr;
+    lastStruct->pNext = newStruct;
+}
 
 #define IO_READ 1
 #define IO_WRITE 2
@@ -53,47 +75,33 @@ const bool enableValidationLayers = true;
 struct ioRequest {
     int32_t ioType;
     int32_t status;
-    int32_t offset;
-    int32_t count;
+    int64_t offset;
+    int64_t count;
     int32_t filename_start;
     int32_t filename_end;
     int32_t result_start;
     int32_t result_end;
 };
 
-#define IO_REQUEST_COUNT 8192
+#define IO_REQUEST_COUNT 262144
 
 struct ioRequests {
-    int32_t count;
-    int32_t status;
-    int32_t _pad2;
+    int32_t ioCount;
+    int32_t programReturnValue;
+    int32_t maxIOCount;
     int32_t _pad3;
     int32_t _pad4;
     int32_t _pad5;
     int32_t _pad6;
     int32_t _pad7;
+    int32_t _pad8;
+    int32_t _pad9;
     ioRequest requests[IO_REQUEST_COUNT];
 };
 
-class ComputeApplication;
-
-void handleIORequests(ComputeApplication *app, ioRequests *ioReqs, char *heapBuf, volatile bool *ioRunning);
-
-/*
-The application launches a compute shader that reads its inputs from stdin,
-runs the compute kernel, and writes the result to stdout.
-
-The data read from stdin is preceded by a 16-byte header:
-    bytes 0..3: uint32_t outputBufferByteLength
-    bytes 4..7: uint32_t vulkanDeviceIndex
-    bytes 8..19: uint32_t workGroupSize[3]
-
-The rest of the data is written to the buffer bound to layout binding 0.
-The output buffer is bound to layout binding 1, and has the size outputBufferByteLength.
-*/
 class ComputeApplication
 {
-  private:
+  protected:
     VkInstance instance;
 
     VkDebugReportCallbackEXT debugReportCallback;
@@ -112,50 +120,56 @@ class ComputeApplication
     VkDescriptorSet descriptorSet;
     VkDescriptorSetLayout descriptorSetLayout;
 
-    VkBuffer outputBuffer;
-    VkDeviceMemory outputBufferMemory;
-
-	// Internal buffers for the device.
     VkBuffer heapBuffer;
-    VkDeviceMemory heapBufferMemory;
+    VkDeviceMemory heapMemory;
 
-    VkBuffer ioBuffer;
-    VkDeviceMemory ioBufferMemory;
+    VkBuffer ioRequestsBuffer;
+    VkDeviceMemory ioRequestsMemory;
 
     VkBuffer ioHeapBuffer;
-    VkDeviceMemory ioHeapBufferMemory;
+    VkDeviceMemory ioHeapMemory;
 
-    uint32_t outputBufferSize; // size of `outputBuffer` in bytes.
-    uint32_t heapBufferSize; // size of `heapBuffer` in bytes.
-    uint32_t ioBufferSize; // size of `heapBuffer` in bytes.
-    uint32_t ioHeapBufferSize; // size of `heapBuffer` in bytes.
+    uint32_t heapBufferSize;
+    uint32_t ioRequestsBufferSize;
+    uint32_t ioHeapBufferSize;
 
     std::vector<const char *> enabledLayers;
 
-    VkQueue queue; // a queue supporting compute operations.
-
+    VkQueue queue;
     VkFence fence;
 
-    void *mappedIoMemory = NULL;
-    void *mappedIoHeapMemory = NULL;
-    void *mappedOutputMemory = NULL;
+    void *mappedHeapMemory = NULL;
+    void *mappedIOMemory = NULL;
+    void *mappedIOHeapMemory = NULL;
 
     uint32_t queueFamilyIndex;
 
     uint32_t vulkanDeviceIndex = 0;
 
-    uint32_t heapSize = 8192;
-    uint32_t outputSize = 4096;
+    uint32_t heapSize = 4096;
     uint32_t ioSize = sizeof(ioRequests);
 
-    uint32_t workSize[3] = {100, 1, 1};
+    uint32_t workSize[3] = {1, 1, 1};
 
     const char *programFileName;
 
-    uint32_t threadCount = workSize[0] * workSize[1] * workSize[2] * 200;
+    uint32_t threadCount = workSize[0] * workSize[1] * workSize[2] * 1;
+
+    uint32_t heapGlobalsOffset = heapSize * threadCount;
+
+    volatile bool ioRunning = true;
+    volatile bool ioReset = true;
+
+    std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
+
+    bool verbose = false;
+    bool timings = false;
 
   public:
-    void run(const char *fileName)
+
+    int exitCode = 0;
+
+    void run(const char *fileName, int argc, char* argv[])
     {
 
         programFileName = fileName;
@@ -165,100 +179,148 @@ class ComputeApplication
         _setmode(_fileno(stdin), _O_BINARY);
 #endif
 
-        outputBufferSize = outputSize * threadCount;
-        heapBufferSize = heapSize * threadCount;
-        ioBufferSize = ioSize;
+        timeStart();
+
+        heapBufferSize = heapSize * (threadCount + 1);
+        ioRequestsBufferSize = ioSize;
         ioHeapBufferSize = heapBufferSize;
 
         // Initialize vulkan:
         createInstance();
+        timeIval("Create instance");
+
         findPhysicalDevice();
+        timeIval("Find device");
+
         createDevice();
+        timeIval("Create device");
+
 
         // Create input and output buffers
         createBuffer();
+        timeIval("Create buffers");
 
         createDescriptorSetLayout();
         createDescriptorSet();
 
         createComputePipeline();
+
+        timeIval("Create compute pipeline");
+
         createCommandBuffer();
+
+        timeIval("Create command buffer");
 
         createFence();
         mapMemory();
 
-        bool ioRunning = true;
+        timeIval("Map memory");
 
-        char *heapBuf = (char *)mappedIoHeapMemory;
-        ioRequests *ioReqs = (ioRequests *)mappedIoMemory;
+        char *ioHeapBuf = (char *)mappedIOHeapMemory;
+        ioRequests *ioReqs = (ioRequests *)mappedIOMemory;
+        char *heapBuf = (char *)mappedIOHeapMemory;
+        int32_t *i32HeapBuf = (int32_t *)heapBuf;
 
-        std::thread ioThread(handleIORequests, this, ioReqs, heapBuf, &ioRunning);
-
-        std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
-        int i = 0;
-        for (i = 0; i < 100; i++) {
-            startCommandBuffer();
-            waitCommandBuffer();
-            //swapOutputBuffers();
+        // Copy argv to the IO heap.
+        int32_t heapEnd = heapGlobalsOffset;
+        int32_t i32HeapEnd = heapGlobalsOffset / 4;
+        int32_t i32_ptr = 0;
+        i32HeapBuf[i32_ptr++] = i32HeapEnd + 2;            // start index of the argv array
+        i32HeapBuf[i32_ptr++] = i32HeapEnd + 2 + argc * 2; // end index of the argv array
+        int32_t heap_ptr = 4 * (2 + argc * 2);
+        int32_t heapPtr = heapEnd + heap_ptr;
+        int32_t i32HeapPtr = i32HeapEnd + 2;
+        for (int i = 0; i < argc; i++) {
+            int32_t len = strlen(argv[i]);
+            i32HeapBuf[i32_ptr++] = heapPtr;       // start index of argv[i] on the heap
+            i32HeapBuf[i32_ptr++] = heapPtr + len; // end index of argv[i]
+            memcpy(heapBuf + heap_ptr, argv[i], len); // copy argv[i] to the heap
+            heap_ptr += len;
+            heapPtr += len;
         }
-        std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
+        writeIOHeapToGPU(0, heap_ptr);
+
+        timeIval("Write argv to GPU");
+
+        ioReqs->ioCount = 0;
+        ioReqs->programReturnValue = 0;
+        ioReqs->maxIOCount = IO_REQUEST_COUNT;
+
+        std::thread ioThread(handleIORequests, this, verbose, ioReqs, ioHeapBuf, &ioRunning, &ioReset);
+
+        timeIval("Start IO thread");
+
+        runProgram();
+
+        timeIval("Run program");
+
         ioRunning = false;
-
-            readOutput();
-            writeOutput();
-
-
-        printf("\nElapsed: %ld ms\n", std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count());
-        printf("Test runs per second: %.0f\n\n", (float)(threadCount * i) / (0.000001 * std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()));
         ioThread.join();
 
+        exitCode = ioReqs->programReturnValue;
+
+        timeIval("Join IO thread");
+
         unmapMemory();
+        timeIval("Unmap memory");
+
         cleanup();
+        timeIval("Clean up");
+    }
+
+    virtual void runProgram() {
+        startCommandBuffer();
+        waitCommandBuffer();
+    }
+
+    void timeStart() {
+        begin = std::chrono::steady_clock::now();
+    }
+
+    void timeIval(const char *name) {
+        std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
+        if (verbose || timings) fprintf(stderr, "[%7ld us] %s\n", std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count(), name);
+        begin = std::chrono::steady_clock::now();
     }
 
     void mapMemory()
     {
-        vkMapMemory(device, ioBufferMemory, 0, ioBufferSize, 0, &mappedIoMemory);
-        vkMapMemory(device, ioHeapBufferMemory, 0, ioHeapBufferSize, 0, &mappedIoHeapMemory);
-        vkMapMemory(device, outputBufferMemory, 0, outputBufferSize, 0, &mappedOutputMemory);
+        vkMapMemory(device, ioRequestsMemory, 0, ioRequestsBufferSize, 0, &mappedIOMemory);
+        vkMapMemory(device, ioHeapMemory, 0, ioHeapBufferSize, 0, &mappedIOHeapMemory);
     }
 
     void unmapMemory()
     {
-        vkUnmapMemory(device, ioBufferMemory);
-        vkUnmapMemory(device, ioHeapBufferMemory);
-        vkUnmapMemory(device, outputBufferMemory);
+        vkUnmapMemory(device, ioRequestsMemory);
+        vkUnmapMemory(device, ioHeapMemory);
     }
 
-    void readOutput()
+    void writeToGPU(VkDeviceMemory memory, VkDeviceSize offset, VkDeviceSize size)
     {
-        VkMappedMemoryRange bufferMemoryRange = {
+        VkMappedMemoryRange memoryRange = {
             .sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
             .pNext = NULL,
-            .memory = outputBufferMemory,
-            .offset = 0,
-            .size = VK_WHOLE_SIZE};
-        vkInvalidateMappedMemoryRanges(device, 1, &bufferMemoryRange);
+            .memory = memory,
+            .offset = offset,
+            .size = size};
+        vkFlushMappedMemoryRanges(device, 1, &memoryRange);
     }
 
-    void writeOutput()
+    void readFromGPU(VkDeviceMemory memory, VkDeviceSize offset, VkDeviceSize size)
     {
-    	for (int j = 0; j < threadCount; j++) {
-	    	bool allOk = true;
-	        for (int i = 0; i < 1024; i++) {
-	            int ok = ((int*)mappedOutputMemory)[i + j*1024];
-	            if (ok == 0) break;
-	            if (ok != 1) {
-	            	printf("[%d] Test %d failed: %d\n", j, i, ok);
-	            	allOk = false;
-	            }
-	        }
-	        if (allOk) {
-	        	printf("[%d] All tests succeeded.\n", j);
-	        }
-        }
-        fflush(stdout);
+        VkMappedMemoryRange memoryRange = {
+            .sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
+            .pNext = NULL,
+            .memory = memory,
+            .offset = offset,
+            .size = size};
+        vkInvalidateMappedMemoryRanges(device, 1, &memoryRange);
     }
+
+    void writeIOToGPU(VkDeviceSize offset, VkDeviceSize size) { writeToGPU(ioRequestsMemory, offset, size); }
+    void readIOFromGPU(VkDeviceSize offset, VkDeviceSize size) { readFromGPU(ioRequestsMemory, offset, size); }
+    void writeIOHeapToGPU(VkDeviceSize offset, VkDeviceSize size) { writeToGPU(ioHeapMemory, offset, size); }
+    void readIOHeapFromGPU(VkDeviceSize offset, VkDeviceSize size) { readFromGPU(ioHeapMemory, offset, size); }
 
     static VKAPI_ATTR VkBool32 VKAPI_CALL debugReportCallbackFn(
         VkDebugReportFlagsEXT flags,
@@ -447,15 +509,22 @@ class ComputeApplication
             .queueCount = 1, // create one queue in this family. We don't need more.
             .pQueuePriorities = &queuePriorities};
 
-        VkPhysicalDeviceFeatures deviceFeatures = {};
+        //VkPhysicalDeviceFeatures deviceFeatures = {};
+        std::vector<const char*> extensions;
+        extensions.push_back(VK_AMD_DEVICE_COHERENT_MEMORY_EXTENSION_NAME);
+
+        VkPhysicalDeviceFeatures2 deviceFeatures = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
 
         VkDeviceCreateInfo deviceCreateInfo = {
             .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
-            .enabledLayerCount = static_cast<uint32_t>(enabledLayers.size()),
-            .ppEnabledLayerNames = enabledLayers.data(),
+            .enabledLayerCount = 0, //static_cast<uint32_t>(enabledLayers.size()),
+            .ppEnabledLayerNames = nullptr, //enabledLayers.data(),
             .pQueueCreateInfos = &queueCreateInfo,
             .queueCreateInfoCount = 1,
-            .pEnabledFeatures = &deviceFeatures,
+            //.pEnabledFeatures = &deviceFeatures,
+            .pNext = &deviceFeatures,
+            //.enabledExtensionCount = (uint32_t)extensions.size(),
+            //.ppEnabledExtensionNames = extensions.data(),
         };
 
         VK_CHECK_RESULT(vkCreateDevice(physicalDevice, &deviceCreateInfo, NULL, &device)); // create logical device.
@@ -473,7 +542,7 @@ class ComputeApplication
 
         /*
         How does this search work?
-        See the documentation of VkPhysicalDeviceMemoryProperties for a detailed description.
+        See the documentation of VkPhysicalDeviceMemoryProperties for a detailed description. 
         */
         for (uint32_t i = 0; i < memoryProperties.memoryTypeCount; ++i)
         {
@@ -484,12 +553,12 @@ class ComputeApplication
         return -1;
     }
 
-    void createAndAllocateBuffer(VkBuffer *buffer, uint32_t bufferSize, VkDeviceMemory *bufferMemory, VkMemoryPropertyFlags flags)
+    void createAndAllocateBuffer(VkBuffer *buffer, uint32_t bufferSize, VkDeviceMemory *bufferMemory, VkMemoryPropertyFlags flags, VkBufferUsageFlags usage)
     {
         VkBufferCreateInfo bufferCreateInfo = {
             .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
             .size = bufferSize,
-            .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+            .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | usage,
             .sharingMode = VK_SHARING_MODE_EXCLUSIVE
         };
 
@@ -514,10 +583,9 @@ class ComputeApplication
 
     void createBuffer()
     {
-        createAndAllocateBuffer(&outputBuffer, outputBufferSize, &outputBufferMemory, VK_MEMORY_PROPERTY_HOST_CACHED_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
-        createAndAllocateBuffer(&heapBuffer, heapBufferSize, &heapBufferMemory, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        createAndAllocateBuffer(&ioBuffer, ioBufferSize, &ioBufferMemory, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
-        createAndAllocateBuffer(&ioHeapBuffer, heapBufferSize, &ioHeapBufferMemory, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
+        createAndAllocateBuffer(&heapBuffer, heapBufferSize, &heapMemory, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+        createAndAllocateBuffer(&ioRequestsBuffer, ioRequestsBufferSize, &ioRequestsMemory, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, 0);
+        createAndAllocateBuffer(&ioHeapBuffer, ioHeapBufferSize, &ioHeapMemory, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
     }
 
     void createDescriptorSetLayout()
@@ -535,15 +603,11 @@ class ComputeApplication
              .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
              .descriptorCount = 1,
              .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT},
-            {.binding = 3,
-             .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-             .descriptorCount = 1,
-             .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT},
         };
 
         VkDescriptorSetLayoutCreateInfo descriptorSetLayoutCreateInfo = {
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-            .bindingCount = 4,
+            .bindingCount = 3,
             .pBindings = descriptorSetLayoutBindings};
 
         // Create the descriptor set layout.
@@ -555,7 +619,7 @@ class ComputeApplication
     {
         VkDescriptorPoolSize descriptorPoolSize = {
             .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-            .descriptorCount = 4};
+            .descriptorCount = 3};
 
         VkDescriptorPoolCreateInfo descriptorPoolCreateInfo = {
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
@@ -580,25 +644,20 @@ class ComputeApplication
         VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &descriptorSetAllocateInfo, &descriptorSet));
         //printf("vkAllocateDescriptorSets done\n");
 
-        VkDescriptorBufferInfo outputDescriptorBufferInfo = {
-            .buffer = outputBuffer,
-            .offset = 0,
-            .range = outputBufferSize};
-
         VkDescriptorBufferInfo heapDescriptorBufferInfo = {
             .buffer = heapBuffer,
             .offset = 0,
             .range = heapBufferSize};
 
         VkDescriptorBufferInfo ioDescriptorBufferInfo = {
-            .buffer = ioBuffer,
+            .buffer = ioRequestsBuffer,
+            .offset = 0,
+            .range = ioRequestsBufferSize};
+
+        VkDescriptorBufferInfo ioHeapDescriptorBufferInfo = {
+            .buffer = ioHeapBuffer,
             .offset = 0,
             .range = ioHeapBufferSize};
-
-        VkDescriptorBufferInfo ioRequestsDescriptorBufferInfo = {
-            .buffer = ioBuffer,
-            .offset = 0,
-            .range = ioBufferSize};
 
         VkWriteDescriptorSet writeDescriptorSets[4] = {
             {
@@ -615,7 +674,7 @@ class ComputeApplication
                 .dstBinding = 1,
                 .descriptorCount = 1,
                 .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-                .pBufferInfo = &ioRequestsDescriptorBufferInfo,
+                .pBufferInfo = &ioDescriptorBufferInfo,
             },
             {
                 .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
@@ -623,19 +682,11 @@ class ComputeApplication
                 .dstBinding = 2,
                 .descriptorCount = 1,
                 .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-                .pBufferInfo = &ioDescriptorBufferInfo,
-            },
-            {
-                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                .dstSet = descriptorSet,
-                .dstBinding = 3,
-                .descriptorCount = 1,
-                .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-                .pBufferInfo = &outputDescriptorBufferInfo,
+                .pBufferInfo = &ioHeapDescriptorBufferInfo,
             },
         };
 
-        vkUpdateDescriptorSets(device, 4, writeDescriptorSets, 0, NULL);
+        vkUpdateDescriptorSets(device, 3, writeDescriptorSets, 0, NULL);
         //printf("vkUpdateDescriptorSets done\n");
     }
 
@@ -788,6 +839,15 @@ class ComputeApplication
         VK_CHECK_RESULT(vkBeginCommandBuffer(commandBuffer, &beginInfo)); // start recording commands.
 
         /*
+        Copy the staging buffers for global data to the heap.
+        */
+        VkBufferCopy copyRegion{};
+        copyRegion.srcOffset = 0;
+        copyRegion.dstOffset = heapGlobalsOffset;
+        copyRegion.size = heapSize;
+        vkCmdCopyBuffer(commandBuffer, ioHeapBuffer, heapBuffer, 1, &copyRegion);
+
+        /*
         We need to bind a pipeline, AND a descriptor set before we dispatch.
 
         The validation layer will NOT give warnings if you forget these, so be very careful not to forget them.
@@ -822,7 +882,7 @@ class ComputeApplication
         and we will not be sure that the command has finished executing unless we wait for the fence.
         Hence, we use a fence here.
         */
-        VK_CHECK_RESULT(vkWaitForFences(device, 1, &fence, VK_TRUE, 10000000000000));
+        VK_CHECK_RESULT(vkWaitForFences(device, 1, &fence, VK_TRUE, 1000000000000));
         VK_CHECK_RESULT(vkResetFences(device, 1, &fence));
     }
 
@@ -844,14 +904,12 @@ class ComputeApplication
         }
 
         vkDestroyFence(device, fence, NULL);
-        vkFreeMemory(device, outputBufferMemory, NULL);
-        vkFreeMemory(device, heapBufferMemory, NULL);
-        vkFreeMemory(device, ioHeapBufferMemory, NULL);
-        vkFreeMemory(device, ioBufferMemory, NULL);
-        vkDestroyBuffer(device, outputBuffer, NULL);
+        vkFreeMemory(device, heapMemory, NULL);
+        vkFreeMemory(device, ioRequestsMemory, NULL);
+        vkFreeMemory(device, ioHeapMemory, NULL);
         vkDestroyBuffer(device, heapBuffer, NULL);
+        vkDestroyBuffer(device, ioRequestsBuffer, NULL);
         vkDestroyBuffer(device, ioHeapBuffer, NULL);
-        vkDestroyBuffer(device, ioBuffer, NULL);
         vkDestroyShaderModule(device, computeShaderModule, NULL);
         vkDestroyDescriptorPool(device, descriptorPool, NULL);
         vkDestroyDescriptorSetLayout(device, descriptorSetLayout, NULL);
@@ -861,79 +919,126 @@ class ComputeApplication
         vkDestroyDevice(device, NULL);
         vkDestroyInstance(instance, NULL);
     }
+
+    static FILE* openFile(char *filename, FILE* file, const char *mode) {
+        if (file != NULL) return file;
+        return fopen(filename, mode);
+    }
+
+    static void handleIORequest(ComputeApplication *app, bool verbose, ioRequests *ioReqs, char *heapBuf, int i) {
+        while (ioReqs->requests[i].status != IO_START);
+        ioRequest req = ioReqs->requests[i];
+        if (verbose) printf("IO req %d: t:%d s:%d off:%ld count:%ld fn_start:%d fn_end:%d res_start:%d res_end:%d\n", i, req.ioType, req.status, req.offset, req.count, req.filename_start, req.filename_end, req.result_start, req.result_end);
+        char *filename = NULL;
+        FILE *file = NULL;
+        if (req.filename_end == 0) {
+            if (req.filename_start == 0) {
+                file = stdin;
+            } else if (req.filename_start == 1) {
+                file = stdout;
+            } else if (req.filename_start == 2) {
+                file = stderr;
+            }
+        } else {
+            VkDeviceSize filenameLength = req.filename_end - req.filename_start;
+            if (verbose) printf("Filename length %lu\n", filenameLength);
+            filename = (char*)malloc(filenameLength + 1);
+            //app->readIOHeapFromGPU(req.filename_start, filenameLength);
+            memcpy(filename, heapBuf + req.filename_start, filenameLength);
+            filename[filenameLength] = 0;
+        }
+        if (req.ioType == IO_READ) {
+            if (verbose) printf("Read %s\n", filename);
+            ioReqs->requests[i].status = IO_IN_PROGRESS;
+            FILE *fd = openFile(filename, file, "r");
+            fseek(fd, req.offset, SEEK_SET);
+            int32_t bytes = fread(heapBuf + req.result_start, 1, req.count, fd);
+            if (file == NULL) fclose(fd);
+            //printf("Result:\n%s\n", heapBuf + req.result_start);
+            //app->writeIOHeapToGPU(req.result_start, bytes);
+            ioReqs->requests[i].result_end = req.result_start + bytes;
+            ioReqs->requests[i].status = IO_COMPLETE;
+            if (verbose) printf("IO completed: %d - status %d\n", i, ioReqs->requests[i].status);
+        } else if (req.ioType == IO_WRITE) {
+            ioReqs->requests[i].status = IO_IN_PROGRESS;
+            FILE *fd = openFile(filename, file, "r+");
+            if (req.offset < 0) {
+                fseek(fd, -1-req.offset, SEEK_END);
+            } else {
+                fseek(fd, req.offset, SEEK_SET);
+            }
+            //app->readIOHeapFromGPU(req.result_start, req.count);
+            int bytes = fwrite(heapBuf + req.result_start, 1, req.count, fd);
+            if (file == NULL) fclose(fd);
+            ioReqs->requests[i].result_end = req.result_start + bytes;
+            ioReqs->requests[i].status = IO_COMPLETE;
+            if (verbose) printf("IO completed: %d - status %d\n", i, ioReqs->requests[i].status);
+        } else if (req.ioType == IO_CREATE) {
+            ioReqs->requests[i].status = IO_IN_PROGRESS;
+            FILE *fd = openFile(filename, file, "w");
+            //app->readIOHeapFromGPU(req.result_start, req.count);
+            int bytes = fwrite(heapBuf + req.result_start, 1, req.count, fd);
+            if (file == NULL) fclose(fd);
+            ioReqs->requests[i].result_end = req.result_start + bytes;
+            ioReqs->requests[i].status = IO_COMPLETE;
+        } else if (req.ioType == IO_DELETE) {
+            ioReqs->requests[i].status = IO_IN_PROGRESS;
+            remove(filename);
+            ioReqs->requests[i].status = IO_COMPLETE;
+        } else if (req.ioType == IO_TRUNCATE) {
+            ioReqs->requests[i].status = IO_IN_PROGRESS;
+            truncate(filename, req.count);
+            ioReqs->requests[i].status = IO_COMPLETE;
+        } else {
+            ioReqs->requests[i].status = IO_ERROR;
+        }
+        app->writeIOToGPU((8 + i * 8) * 4, 8 * 4);
+    }
+
+    static void handleIORequests(ComputeApplication *app, bool verbose, ioRequests *ioReqs, char *heapBuf, volatile bool *ioRunning, volatile bool *ioReset) {
+
+        std::vector<std::thread> threads;
+
+        int32_t lastReqNum = 0;
+        if (verbose) printf("IO Running\n");
+        while (*ioRunning) {
+            if (*ioReset) {
+                for (std::thread& t : threads) {
+                    if (t.joinable()) {
+                        t.join();
+                    }
+                }
+                threads.clear();
+                lastReqNum = 0;
+                ioReqs->ioCount = 0;
+                *ioReset = false;
+            }
+            //app->readIOFromGPU(0, 8 * 4);
+            int32_t reqNum = ioReqs->ioCount;
+            for (int32_t i = lastReqNum; i < reqNum; i++) {
+                if (verbose) printf("Got IO request %d\n", i);
+                //threads.push_back(std::thread(handleIORequest, app, ioReqs, heapBuf, i));
+                //app->readIOFromGPU((8 + i * 8) * 4, 8 * 4);
+                handleIORequest(app, verbose, ioReqs, heapBuf, i);
+            }
+            lastReqNum = reqNum;
+            for (int32_t i = 0; i < reqNum; i++) {
+                if (ioReqs->requests[i].status == IO_HANDLED) {
+                    if (verbose) printf("GPU got IO: %d - status %d\n", i, ioReqs->requests[i].status);
+                    ioReqs->requests[i].status = IO_NONE;
+                } else if (ioReqs->requests[i].status == IO_COMPLETE) {
+                    //app->readIOFromGPU((8 + i * 8) * 4, 8 * 4);
+                }
+            }
+        }
+        for (std::thread& t : threads) {
+            if (t.joinable()) {
+                t.join();
+            }
+        }
+        threads.clear();
+        if (verbose) printf("Exited IO thread\n");
+    }
+
 };
 
-void handleIORequest(ComputeApplication *app, ioRequests *ioReqs, char *heapBuf, int i) {
-    ioRequest req = ioReqs->requests[i];
-    VkDeviceSize filenameLength = req.filename_end - req.filename_start;
-    char* filename = (char*)malloc(filenameLength + 1);
-    memcpy(filename, heapBuf + req.filename_start, filenameLength);
-    filename[filenameLength] = 0;
-    if (req.ioType == IO_READ) {
-        ioReqs->requests[i].status = IO_IN_PROGRESS;
-        FILE *fd = fopen(filename, "r");
-        fseek(fd, req.offset, SEEK_SET);
-        int32_t bytes = fread(heapBuf + req.result_start, 1, req.count, fd);
-        fclose(fd);
-        ioReqs->requests[i].result_end = req.result_start + bytes;
-        ioReqs->requests[i].status = IO_COMPLETE;
-    } else if (req.ioType == IO_WRITE) {
-        ioReqs->requests[i].status = IO_IN_PROGRESS;
-        FILE *fd = fopen(filename, "r+");
-        fseek(fd, req.offset, SEEK_SET);
-        int bytes = fwrite(heapBuf + req.result_start, 1, req.count, fd);
-        fclose(fd);
-        ioReqs->requests[i].result_end = req.result_start + bytes;
-        ioReqs->requests[i].status = IO_COMPLETE;
-    } else if (req.ioType == IO_CREATE) {
-        ioReqs->requests[i].status = IO_IN_PROGRESS;
-        FILE *fd = fopen(filename, "w");
-        fclose(fd);
-        ioReqs->requests[i].status = IO_COMPLETE;
-    } else if (req.ioType == IO_DELETE) {
-        ioReqs->requests[i].status = IO_IN_PROGRESS;
-        remove(filename);
-        ioReqs->requests[i].status = IO_COMPLETE;
-    } else if (req.ioType == IO_TRUNCATE) {
-        ioReqs->requests[i].status = IO_IN_PROGRESS;
-        truncate(filename, req.count);
-        ioReqs->requests[i].status = IO_COMPLETE;
-    } else {
-        ioReqs->requests[i].status = IO_ERROR;
-    }
-}
-
-void handleIORequests(ComputeApplication *app, ioRequests *ioReqs, char *heapBuf, volatile bool *ioRunning) {
-    int32_t lastReqNum = 0;
-    while (*ioRunning) {
-        int32_t reqNum = ioReqs->count;
-        for (int32_t i = lastReqNum; i < reqNum; i++) {
-            handleIORequest(app, ioReqs, heapBuf, i);
-        }
-        lastReqNum = reqNum;
-        for (int32_t i = 0; i < reqNum; i++) {
-        	if (ioReqs->requests[i].status == IO_HANDLED) {
-        		ioReqs->requests[i].status = IO_NONE;
-        	}
-        }
-    }
-}
-
-
-int main(int argc, char *argv[])
-{
-    ComputeApplication app;
-
-    try
-    {
-        app.run(argc > 1 ? argv[1] : "test_string.spv");
-    }
-    catch (const std::runtime_error &e)
-    {
-        printf("%s\n", e.what());
-        app.cleanup();
-        return EXIT_FAILURE;
-    }
-
-    return EXIT_SUCCESS;
-}

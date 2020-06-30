@@ -1,4 +1,5 @@
 *.swp
 test_file
 test_string
+grep
 *.comp
