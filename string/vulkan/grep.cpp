@@ -103,6 +103,18 @@ class ComputeApplication;
 
 void handleIORequests(ComputeApplication *app, ioRequests *ioReqs, char *heapBuf, volatile bool *ioRunning, volatile bool *ioReset);
 
+std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
+
+void timeStart() {
+    begin = std::chrono::steady_clock::now();
+}
+
+void timeIval(const char *name) {
+    std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
+    fprintf(stderr, "[%7ld us] %s\n", std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count(), name);
+    begin = std::chrono::steady_clock::now();
+}
+
 /*
 The application launches a compute shader that reads its inputs from stdin,
 runs the compute kernel, and writes the result to stdout.
@@ -169,14 +181,18 @@ class ComputeApplication
 
     uint32_t vulkanDeviceIndex = 0;
 
-    uint32_t heapSize = 8192;
+    uint32_t heapSize = 4096;
+    uint32_t i32HeapSize = 256;
     uint32_t ioSize = sizeof(ioRequests);
 
-    uint32_t workSize[3] = {256, 1, 1};
+    uint32_t workSize[3] = {100, 1, 1};
 
     const char *programFileName;
 
-    uint32_t threadCount = workSize[0] * workSize[1] * workSize[2] * 16;
+    uint32_t threadCount = workSize[0] * workSize[1] * workSize[2] * 255;
+
+    uint32_t heapGlobalsOffset = heapSize * threadCount;
+    uint32_t i32HeapGlobalsOffset = i32HeapSize * threadCount;
 
   public:
 
@@ -192,95 +208,129 @@ class ComputeApplication
         _setmode(_fileno(stdin), _O_BINARY);
 #endif
 
+        timeStart();
+
         heapBufferSize = heapSize * (threadCount + 1);
+        i32HeapBufferSize = 4 * i32HeapSize * (threadCount + 1);
         ioBufferSize = ioSize;
         ioHeapBufferSize = heapBufferSize;
+
+        if (verbose) {
+            printf("%d\n", heapBufferSize);
+            printf("%d\n", i32HeapBufferSize);
+            printf("%d\n", ioBufferSize);
+            printf("%d\n", ioHeapBufferSize);
+        }
 
         if (verbose) printf("createInstance\n");
 
         // Initialize vulkan:
         createInstance();
+        timeIval("Create instance");
+
         findPhysicalDevice();
+        timeIval("Find device");
+
         createDevice();
+        timeIval("Create device");
+
 
         if (verbose) printf("createBuffer\n");
 
         // Create input and output buffers
         createBuffer();
+        timeIval("Create buffers");
 
         createDescriptorSetLayout();
         createDescriptorSet();
 
         createComputePipeline();
+
+        timeIval("Create compute pipeline");
+
         createCommandBuffer();
+
+        timeIval("Create command buffer");
 
         if (verbose) printf("mapMemory\n");
 
         createFence();
         mapMemory();
 
+        timeIval("Map memory");
+
         volatile bool ioRunning = true;
         volatile bool ioReset = true;
 
         char *ioHeapBuf = (char *)mappedIOHeapMemory;
         ioRequests *ioReqs = (ioRequests *)mappedIOMemory;
-        char *heapBuf = (char *)mappedHeapMemory;
-        int32_t *i32HeapBuf = (int32_t *) mappedI32HeapMemory;
+        char *heapBuf = (char *)mappedIOHeapMemory;
+        int32_t *i32HeapBuf = (int32_t *)(heapBuf + heapSize);
 
-        // Copy argv to the heap.
-        int32_t heapEnd = heapSize * threadCount;
-        i32HeapBuf[heapEnd] = heapEnd+2;          // start index of the argv array
-        i32HeapBuf[heapEnd+1] = heapEnd+2+argc*2; // end index of the argv array
+
+        // Copy argv to the IO heap.
+        int32_t heapEnd = heapGlobalsOffset;
+        int32_t i32HeapEnd = i32HeapGlobalsOffset;
+        int32_t i32_ptr = 0, heap_ptr = 0;
+        i32HeapBuf[i32_ptr++] = i32HeapEnd+2;          // start index of the argv array
+        i32HeapBuf[i32_ptr++] = i32HeapEnd+2+argc*2; // end index of the argv array
         int32_t heapPtr = heapEnd;
-        int32_t i32HeapPtr = heapEnd + 2;
+        int32_t i32HeapPtr = i32HeapEnd + 2;
         for (int i = 0; i < argc; i++) {
             int32_t len = strlen(argv[i]);
-            i32HeapBuf[i32HeapPtr++] = heapPtr;       // start index of argv[i] on the heap
-            i32HeapBuf[i32HeapPtr++] = heapPtr + len; // end index of argv[i]
-            memcpy(heapBuf + heapPtr, argv[i], len);  // copy argv[i] to the heap
+            i32HeapBuf[i32_ptr++] = heapPtr;       // start index of argv[i] on the heap
+            i32HeapBuf[i32_ptr++] = heapPtr + len; // end index of argv[i]
+            memcpy(heapBuf + heap_ptr, argv[i], len);  // copy argv[i] to the heap
+            heap_ptr += len;
+            i32HeapPtr += 2;
             heapPtr += len;
         }
         if (verbose) printf("Writing argv to GPU\n");
-        writeToGPU(heapMemory, heapEnd, heapPtr-heapEnd);
-        writeToGPU(i32HeapMemory, heapEnd, i32HeapPtr-heapEnd);
+        writeIOHeapToGPU(0, heapSize + 4 * i32HeapSize);
+
+        timeIval("Write argv to GPU");
 
         ioRunning = true;
         std::thread ioThread(handleIORequests, this, ioReqs, ioHeapBuf, &ioRunning, &ioReset);
 
-        std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
-        for (int i = 0; i < 1; i++) {
-            while(ioReset);
-            startCommandBuffer();
-            waitCommandBuffer();
-            ioReset = true;
-        }
-        std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
+        timeIval("Start IO thread");
+
+        // while(ioReset);
+        startCommandBuffer();
+        waitCommandBuffer();
+        // ioReset = true;
+
+        timeIval("Run program");
 
         ioRunning = false;
         ioThread.join();
 
-        if (verbose) printf("\nElapsed: %ld ms\n", std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count());
+        timeIval("Join IO thread");
+
 
         exitCode = ioReqs->exitCode;
 
         printf("Last seen %d\n", ioReqs->_pad2);
 
         unmapMemory();
+        timeIval("Unmap memory");
+
         cleanup();
+        timeIval("Clean up");
     }
 
     void mapMemory()
     {
-        vkMapMemory(device, heapMemory, 0, heapBufferSize, 0, &mappedHeapMemory);
-        vkMapMemory(device, i32HeapMemory, 0, i32HeapBufferSize, 0, &mappedI32HeapMemory);
+        //vkMapMemory(device, heapMemory, 0, heapBufferSize, 0, &mappedHeapMemory);
+        //vkMapMemory(device, i32HeapMemory, 0, i32HeapBufferSize, 0, &mappedI32HeapMemory);
         vkMapMemory(device, ioMemory, 0, ioBufferSize, 0, &mappedIOMemory);
         vkMapMemory(device, ioHeapMemory, 0, ioHeapBufferSize, 0, &mappedIOHeapMemory);
     }
 
     void unmapMemory()
     {
-        vkUnmapMemory(device, heapMemory);
-        vkUnmapMemory(device, i32HeapMemory);
+        //vkUnmapMemory(device, heapMemory);
+        //vkUnmapMemory(device, i32HeapMemory);
         vkUnmapMemory(device, ioMemory);
         vkUnmapMemory(device, ioHeapMemory);
     }
@@ -543,12 +593,12 @@ class ComputeApplication
         return -1;
     }
 
-    void createAndAllocateBuffer(VkBuffer *buffer, uint32_t bufferSize, VkDeviceMemory *bufferMemory, VkMemoryPropertyFlags flags)
+    void createAndAllocateBuffer(VkBuffer *buffer, uint32_t bufferSize, VkDeviceMemory *bufferMemory, VkMemoryPropertyFlags flags, VkBufferUsageFlags usage)
     {
         VkBufferCreateInfo bufferCreateInfo = {
             .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
             .size = bufferSize,
-            .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+            .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | usage,
             .sharingMode = VK_SHARING_MODE_EXCLUSIVE
         };
 
@@ -573,10 +623,10 @@ class ComputeApplication
 
     void createBuffer()
     {
-        createAndAllocateBuffer(&heapBuffer, heapBufferSize, &heapMemory, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
-        createAndAllocateBuffer(&i32HeapBuffer, 4*heapBufferSize, &i32HeapMemory, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
-        createAndAllocateBuffer(&ioBuffer, ioBufferSize, &ioMemory, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
-        createAndAllocateBuffer(&ioHeapBuffer, ioHeapBufferSize, &ioHeapMemory, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
+        createAndAllocateBuffer(&heapBuffer, heapBufferSize, &heapMemory, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+        createAndAllocateBuffer(&i32HeapBuffer, i32HeapBufferSize, &i32HeapMemory, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+        createAndAllocateBuffer(&ioBuffer, ioBufferSize, &ioMemory, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, 0);
+        createAndAllocateBuffer(&ioHeapBuffer, ioHeapBufferSize, &ioHeapMemory, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
     }
 
     void createDescriptorSetLayout()
@@ -647,7 +697,7 @@ class ComputeApplication
         VkDescriptorBufferInfo i32HeapDescriptorBufferInfo = {
             .buffer = i32HeapBuffer,
             .offset = 0,
-            .range = 4*heapBufferSize};
+            .range = i32HeapBufferSize};
 
         VkDescriptorBufferInfo ioDescriptorBufferInfo = {
             .buffer = ioBuffer,
@@ -839,12 +889,27 @@ class ComputeApplication
         //updateOutputDescriptorSet();
 
         /*
-        Now we shall start recording commands into the newly allocated command buffer. 
+        Now we shall start recording commands into the newly allocated command buffer.
         */
         VkCommandBufferBeginInfo beginInfo = {};
         beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
         beginInfo.flags = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT;
         VK_CHECK_RESULT(vkBeginCommandBuffer(commandBuffer, &beginInfo)); // start recording commands.
+
+        /*
+        Copy the staging buffers for global data to the heap.
+        */
+        VkBufferCopy copyRegion{};
+        copyRegion.srcOffset = 0;
+        copyRegion.dstOffset = heapGlobalsOffset;
+        copyRegion.size = heapSize;
+        vkCmdCopyBuffer(commandBuffer, ioHeapBuffer, heapBuffer, 1, &copyRegion);
+
+        VkBufferCopy copyRegion2{};
+        copyRegion2.srcOffset = heapSize;
+        copyRegion2.dstOffset = 4 * i32HeapGlobalsOffset;
+        copyRegion2.size = 4 * i32HeapSize;
+        vkCmdCopyBuffer(commandBuffer, ioHeapBuffer, i32HeapBuffer, 1, &copyRegion2);
 
         /*
         We need to bind a pipeline, AND a descriptor set before we dispatch.
@@ -881,7 +946,7 @@ class ComputeApplication
         and we will not be sure that the command has finished executing unless we wait for the fence.
         Hence, we use a fence here.
         */
-        VK_CHECK_RESULT(vkWaitForFences(device, 1, &fence, VK_TRUE, 100000000000000));
+        VK_CHECK_RESULT(vkWaitForFences(device, 1, &fence, VK_TRUE, 1000000000000));
         VK_CHECK_RESULT(vkResetFences(device, 1, &fence));
     }
 
@@ -930,6 +995,7 @@ FILE* openFile(char *filename, FILE* file, const char *mode) {
 FILE *ff = NULL;
 
 void handleIORequest(ComputeApplication *app, ioRequests *ioReqs, char *heapBuf, int i) {
+    while (ioReqs->requests[i].status != IO_START);
     ioRequest req = ioReqs->requests[i];
     if (verbose) printf("IO req %d: %d %d %d %d %d %d %d %d\n", i, req.ioType, req.filename_start, req.filename_end, req.offset, req.count, req.result_start, req.result_end, req.status);
     char *filename = NULL;

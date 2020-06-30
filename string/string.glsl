@@ -10,6 +10,7 @@
 #define _(c) heap[heapPtr++] = CHR_##c;
 
 layout(std430, binding = 0) buffer heapBuffer { char heap[]; };
+layout(std430, binding = 0) buffer iv4Buffer { i64vec4 iv4heap[]; };
 layout(std430, binding = 1) buffer i32heapBuffer { int32_t i32heap[]; };
 
 int ThreadGroupCount = int(gl_NumWorkGroups.x);
@@ -22,9 +23,16 @@ int ThreadLocalID = int(gl_LocalInvocationID.x);
 int heapStart = int(ThreadID) * HEAP_SIZE;
 int heapEnd = heapStart + HEAP_SIZE;
 
+int i32HeapStart = int(ThreadID) * I32HEAP_SIZE;
+int i32HeapEnd = heapStart + I32HEAP_SIZE;
+
 int heapPtr = heapStart;
 
-int i32heapPtr = heapStart;
+int i32heapPtr = i32HeapStart;
+
+char toChar(int i) {
+    return char(i);
+}
 
 int strLen(string str) {
 	return str.y - str.x;
@@ -228,6 +236,7 @@ string str(char c) {
     heap[heapPtr++] = c;
     return string(heapPtr-1, heapPtr);
 }
+
 
 int indexOf(string s, char c) {
 	for (int i = s.x; i < s.y; i++) {

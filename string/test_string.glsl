@@ -1,17 +1,9 @@
-#define version #version
-#define extension #extension
-
-version 450
-extension GL_EXT_shader_explicit_arithmetic_types : require
-
 #define HEAP_SIZE 8192
 
 layout ( local_size_x = 1, local_size_y = 1, local_size_z = 1 ) in;
 
-layout(std430, binding = 0) readonly buffer inputBuffer { int32_t inputs[]; };
 layout(std430, binding = 1) buffer outputBuffer { int32_t outputs[]; };
-layout(std430, binding = 2) buffer heapBuffer { int8_t heap[]; };
-layout(std430, binding = 3) buffer i32heapBuffer { int32_t i32heap[]; };
+
 
 #include "string.glsl"
 
@@ -27,7 +19,7 @@ void main() {
 	string s = malloc(10);
 	int len = strLen(s);
 	for (int i = 0; i < len; i++) {
-		setC(s, i, char(CHR_A + i));
+		setC(s, i, CHR_A + char(i));
 	}
 	string t = malloc(10);
 	for (int i = 0; i < len; i++) {

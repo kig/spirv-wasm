@@ -11,6 +11,7 @@ struct ioRequest {
 
 layout(std430, binding = 2) volatile buffer ioBuffer { ioRequest ioRequests[]; };
 layout(std430, binding = 3) volatile buffer ioBytes { char ioHeap[]; };
+layout(std430, binding = 3) volatile buffer iv4IOBytes { i64vec4 iv4IOHeap[]; };
 
 #define IO_READ 1
 #define IO_WRITE 2
@@ -40,8 +41,8 @@ int ioHeapEnd = heapStart + HEAP_SIZE;
 int ioHeapPtr = ioHeapStart;
 
 stringArray argv = stringArray(
-    i32heap[ThreadCount * HEAP_SIZE],
-    i32heap[ThreadCount * HEAP_SIZE + 1]
+    i32heap[ThreadCount * I32HEAP_SIZE],
+    i32heap[ThreadCount * I32HEAP_SIZE + 1]
 );
 
 struct io {
@@ -51,7 +52,7 @@ struct io {
 
 string ioMalloc(int len) {
     int ptr = ioHeapPtr;
-    ioHeapPtr += len;
+    ioHeapPtr += ((len+31) / 32) * 32;
     return string(ptr, ioHeapPtr);
 }
 
@@ -89,15 +90,22 @@ io requestIO(ioRequest req) {
 }
 
 string awaitIO(io reqNum, inout int status) {
-    if (ioRequests[reqNum.index].status != IO_NONE) {
-        while (ioRequests[reqNum.index].status < IO_COMPLETE);
+    if (ioRequests[reqNum.index].status != IO_NONE && ioRequests[reqNum.index].status < IO_COMPLETE) {
+        while (ioRequests[reqNum.index].status < IO_COMPLETE) {
+//            for (int i = 0; i < 1000; i++) status = i; // wait for a ~microsecond
+        }
     }
     ioRequest req = ioRequests[reqNum.index];
-    status = req.status;
+    status = 0 * status + req.status;
     ioRequests[reqNum.index].status = IO_HANDLED;
+
     string s = string(reqNum.heapBufStart, reqNum.heapBufStart + strLen(req.data));
-    for (int i = s.x, x = req.data.x, y = req.data.y; x < y; x++, i++) {
-        heap[i] = ioHeap[x];
+    int i = s.x, x = req.data.x, y = req.data.y;
+    for (; i < s.y - 31 && x < y; x+=32, i+=32) {
+        iv4heap[i/32] = iv4IOHeap[x/32];
+    }
+    for (; i < s.x && x < y; x++, i++) {
+        heap[i] = ioHeap[i];
     }
     return s;
 }
