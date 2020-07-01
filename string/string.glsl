@@ -160,7 +160,29 @@ string str(uint i) {
 	return reverse(string(start, heapPtr));
 }
 
+string str(uint64_t i) {
+	ptr_t start = heapPtr;
+	if (i == 0) heap[heapPtr++] = CHR_0;
+	while (i > 0) {
+		heap[heapPtr++] = CHR_0 + char(i % 10);
+		i /= 10;
+	}
+	return reverse(string(start, heapPtr));
+}
+
 string str(int i) {
+	ptr_t start = heapPtr;
+	if (i < 0) heap[heapPtr++] = CHR_DASH;
+	else if (i == 0) heap[heapPtr++] = CHR_0;
+	i = abs(i);
+	while (i > 0) {
+		heap[heapPtr++] = CHR_0 + char(i % 10);
+		i /= 10;
+	}
+	return reverse(string(start, heapPtr));
+}
+
+string str(int64_t i) {
 	ptr_t start = heapPtr;
 	if (i < 0) heap[heapPtr++] = CHR_DASH;
 	else if (i == 0) heap[heapPtr++] = CHR_0;

@@ -10,6 +10,7 @@
 #include <chrono>
 #include <thread>
 #include <unistd.h>
+#include <mutex>
 
 #ifdef WIN32
 #include <io.h>
@@ -98,6 +99,10 @@ struct ioRequests {
     int32_t _pad9;
     ioRequest requests[IO_REQUEST_COUNT];
 };
+
+
+static std::mutex completed_mutex;
+
 
 class ComputeApplication
 {
@@ -207,7 +212,7 @@ class ComputeApplication
 
         timeIval("Create compute pipeline");
 
-        createCommandBuffer();
+       createCommandBuffer();
 
         timeIval("Create command buffer");
 
@@ -232,8 +237,8 @@ class ComputeApplication
         int32_t i32HeapPtr = i32HeapEnd + 2;
         for (int i = 0; i < argc; i++) {
             int32_t len = strlen(argv[i]);
-            i32HeapBuf[i32_ptr++] = heapPtr;       // start index of argv[i] on the heap
-            i32HeapBuf[i32_ptr++] = heapPtr + len; // end index of argv[i]
+            i32HeapBuf[i32_ptr++] = heapPtr;          // start index of argv[i] on the heap
+            i32HeapBuf[i32_ptr++] = heapPtr + len;    // end index of argv[i]
             memcpy(heapBuf + heap_ptr, argv[i], len); // copy argv[i] to the heap
             heap_ptr += len;
             heapPtr += len;
@@ -925,7 +930,7 @@ class ComputeApplication
         return fopen(filename, mode);
     }
 
-    static void handleIORequest(ComputeApplication *app, bool verbose, ioRequests *ioReqs, char *heapBuf, int i) {
+    static void handleIORequest(ComputeApplication *app, bool verbose, ioRequests *ioReqs, char *heapBuf, int i, volatile int64_t *completed, int threadIdx) {
         while (ioReqs->requests[i].status != IO_START);
         ioRequest req = ioReqs->requests[i];
         if (verbose) printf("IO req %d: t:%d s:%d off:%ld count:%ld fn_start:%d fn_end:%d res_start:%d res_end:%d\n", i, req.ioType, req.status, req.offset, req.count, req.filename_start, req.filename_end, req.result_start, req.result_end);
@@ -992,51 +997,62 @@ class ComputeApplication
         } else {
             ioReqs->requests[i].status = IO_ERROR;
         }
-        app->writeIOToGPU((8 + i * 8) * 4, 8 * 4);
+        //app->writeIOToGPU((8 + i * 8) * 4, 8 * 4);
+        if (threadIdx > 0) {
+            std::lock_guard<std::mutex> guard(completed_mutex);
+            completed[threadIdx] = 1;
+        }
     }
 
     static void handleIORequests(ComputeApplication *app, bool verbose, ioRequests *ioReqs, char *heapBuf, volatile bool *ioRunning, volatile bool *ioReset) {
 
-        std::vector<std::thread> threads;
+        int threadCount = 16;
+        std::thread threads[threadCount];
+        int threadIdx = 0;
+        volatile int64_t *completed = (volatile int64_t*)malloc(sizeof(int64_t) * threadCount);
 
         int32_t lastReqNum = 0;
         if (verbose) printf("IO Running\n");
         while (*ioRunning) {
             if (*ioReset) {
-                for (std::thread& t : threads) {
-                    if (t.joinable()) {
-                        t.join();
-                    }
-                }
-                threads.clear();
+                while (threadIdx > 0) threads[--threadIdx].join();
+                for (int i=0; i < threadCount; i++) completed[i] = 0;
                 lastReqNum = 0;
                 ioReqs->ioCount = 0;
                 *ioReset = false;
             }
-            //app->readIOFromGPU(0, 8 * 4);
             int32_t reqNum = ioReqs->ioCount;
             for (int32_t i = lastReqNum; i < reqNum; i++) {
                 if (verbose) printf("Got IO request %d\n", i);
-                //threads.push_back(std::thread(handleIORequest, app, ioReqs, heapBuf, i));
-                //app->readIOFromGPU((8 + i * 8) * 4, 8 * 4);
-                handleIORequest(app, verbose, ioReqs, heapBuf, i);
-            }
-            lastReqNum = reqNum;
-            for (int32_t i = 0; i < reqNum; i++) {
-                if (ioReqs->requests[i].status == IO_HANDLED) {
-                    if (verbose) printf("GPU got IO: %d - status %d\n", i, ioReqs->requests[i].status);
-                    ioReqs->requests[i].status = IO_NONE;
-                } else if (ioReqs->requests[i].status == IO_COMPLETE) {
-                    //app->readIOFromGPU((8 + i * 8) * 4, 8 * 4);
+                if (ioReqs->requests[i].ioType == IO_READ) {
+                    int tidx = threadIdx;
+                    if (tidx == threadCount) {
+                        // Find completed thread.
+                        for (int j = 0; j < threadCount; j++) {
+                            if (completed[j] == 1) {
+                                tidx = j;
+                                threads[j].join();
+                                break;
+                            }
+                        }
+                        if (tidx == threadCount) {
+                            threads[0].join();
+                            tidx = 0;
+                        }
+                    } else {
+                        tidx = threadIdx++;
+                    }
+                    std::lock_guard<std::mutex> guard(completed_mutex);
+                    completed[tidx] = 0;
+                    threads[tidx] = std::thread(handleIORequest, app, verbose, ioReqs, heapBuf, i, completed, tidx);
+                } else {
+                    handleIORequest(app, verbose, ioReqs, heapBuf, i, completed, -1);
                 }
             }
+            lastReqNum = reqNum;
         }
-        for (std::thread& t : threads) {
-            if (t.joinable()) {
-                t.join();
-            }
-        }
-        threads.clear();
+        while (threadIdx > 0) threads[--threadIdx].join();
+        for (int i=0; i < threadCount; i++) completed[i] = 0;
         if (verbose) printf("Exited IO thread\n");
     }
 

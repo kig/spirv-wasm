@@ -140,7 +140,7 @@ alloc_t awaitIO(io request) {
     return awaitIO(request, errno);
 }
 
-io read(string filename, size_t offset, size_t count, string buf) {
+io read(string filename, int64_t offset, size_t count, string buf) {
     return requestIO(ioRequest(IO_READ, IO_START, offset, min(count, strLen(buf)), filename, buf));
 }
 
@@ -148,7 +148,7 @@ io read(string filename, string buf) {
     return read(filename, 0, strLen(buf), buf);
 }
 
-io write(string filename, size_t offset, size_t count, string buf) {
+io write(string filename, int64_t offset, size_t count, string buf) {
     return requestIO(ioRequest(IO_WRITE, IO_START, offset, min(count, strLen(buf)), filename, buf));
 }
 
@@ -168,10 +168,10 @@ io createFile(string filename) {
     return requestIO(ioRequest(IO_CREATE, IO_START, 0, 0, filename, string(0,0)));
 }
 
-alloc_t readSync(string filename, size_t offset, size_t count, string buf) { return awaitIO(read(filename, offset, count, buf)); }
+alloc_t readSync(string filename, int64_t offset, size_t count, string buf) { return awaitIO(read(filename, offset, count, buf)); }
 alloc_t readSync(string filename, string buf) { return awaitIO(read(filename, buf)); }
 
-alloc_t writeSync(string filename, size_t offset, size_t count, string buf) { return awaitIO(write(filename, offset, count, buf)); }
+alloc_t writeSync(string filename, int64_t offset, size_t count, string buf) { return awaitIO(write(filename, offset, count, buf)); }
 alloc_t writeSync(string filename, string buf) { return awaitIO(write(filename, buf)); }
 
 void print(string message) {

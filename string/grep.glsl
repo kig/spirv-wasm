@@ -5,10 +5,10 @@ layout ( local_size_x = 255, local_size_y = 1, local_size_z = 1 ) in;
 #include "file.glsl"
 
 shared int done;
-shared int wgOff;
+shared int64_t wgOff;
 shared string wgBuf;
 
-bool grepBuffer(int blockSize, string buf, string pattern, char p, int wgOff) {
+bool grepBuffer(int blockSize, string buf, string pattern, char p) {
     bool found = false;
     for (size_t i = 0, l = strLen(buf); i < blockSize; i+=32) {
         ptr_t idx = buf.x + i;
@@ -33,11 +33,11 @@ void main() {
     string filename = aGet(argv, 2);
 
     if (ThreadID == 0) {
+        /*
         FREE(
             println(concat("Searching for pattern ", pattern));
             println(concat("In file ", filename));
         )
-        /*
             println(concat("Thread count ", str(ThreadCount)));
             println(concat("Thread groups ", str(ThreadGroupCount)));
             println(concat("Local thread count ", str(ThreadLocalCount)));
@@ -112,7 +112,7 @@ void main() {
             int start = startp;
             heapPtr = startp * 4;
 
-            found = grepBuffer(blockSize, buf, pattern, p, wgOff) || found;
+            found = grepBuffer(blockSize, buf, pattern, p) || found;
 
             int end = heapPtr / 4;
 
@@ -120,7 +120,7 @@ void main() {
             memoryBarrier();
 
             for (int j = start; j < end; j++) {
-                str(uint(i32heap[j] + ThreadLocalID * blockSize + wgOff));
+                str(int64_t(i32heap[j] + ThreadLocalID * blockSize) + wgOff);
                 _w('\n');
             }
 
