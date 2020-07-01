@@ -64,21 +64,21 @@ char uppercase(char c) {
 	return c + char((c >= CHR_a && c <= CHR_z) ? (CHR_A - CHR_a) : char(0));
 }
 
-string lowercase(string s) {
+string lowercaseInPlace(string s) {
 	for (ptr_t i = s.x; i < s.y; i++) {
 		heap[i] = lowercase(heap[i]);
 	}
 	return s;
 }
 
-string uppercase(string s) {
+string uppercaseInPlace(string s) {
 	for (ptr_t i = s.x; i < s.y; i++) {
 		heap[i] = uppercase(heap[i]);
 	}
 	return s;
 }
 
-string capitalize(string s) {
+string capitalizeInPlace(string s) {
 	bool afterSpace = true;
 	for (ptr_t i = s.x; i < s.y; i++) {
 		char c = heap[i];
@@ -89,13 +89,29 @@ string capitalize(string s) {
 	return s;
 }
 
-string reverse(string s) {
+string reverseInPlace(string s) {
 	for (ptr_t i = s.x, j = s.y-1; i < j; i++, j--) {
 		char tmp = heap[i];
 		heap[i] = heap[j];
 		heap[j] = tmp;
 	}
 	return s;
+}
+
+string lowercase(string s) {
+    return lowercaseInPlace(clone(s));
+}
+
+string uppercase(string s) {
+    return uppercaseInPlace(clone(s));
+}
+
+string capitalize(string s) {
+    return capitalizeInPlace(clone(s));
+}
+
+string reverse(string s) {
+    return reverseInPlace(clone(s));
 }
 
 int strCmp(string a, string b) {
@@ -157,7 +173,7 @@ string str(uint i) {
 		heap[heapPtr++] = CHR_0 + char(i % 10);
 		i /= 10;
 	}
-	return reverse(string(start, heapPtr));
+	return reverseInPlace(string(start, heapPtr));
 }
 
 string str(uint64_t i) {
@@ -167,7 +183,7 @@ string str(uint64_t i) {
 		heap[heapPtr++] = CHR_0 + char(i % 10);
 		i /= 10;
 	}
-	return reverse(string(start, heapPtr));
+	return reverseInPlace(string(start, heapPtr));
 }
 
 string str(int i) {
@@ -179,7 +195,7 @@ string str(int i) {
 		heap[heapPtr++] = CHR_0 + char(i % 10);
 		i /= 10;
 	}
-	return reverse(string(start, heapPtr));
+	return reverseInPlace(string(start, heapPtr));
 }
 
 string str(int64_t i) {
@@ -191,7 +207,7 @@ string str(int64_t i) {
 		heap[heapPtr++] = CHR_0 + char(i % 10);
 		i /= 10;
 	}
-	return reverse(string(start, heapPtr));
+	return reverseInPlace(string(start, heapPtr));
 }
 
 string str(string v) {

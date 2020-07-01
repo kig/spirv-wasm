@@ -7,19 +7,33 @@ layout ( local_size_x = 255, local_size_y = 1, local_size_z = 1 ) in;
 shared int done;
 shared int64_t wgOff;
 shared string wgBuf;
+shared ptr_t groupHeapPtr;
 
-bool grepBuffer(int blockSize, string buf, string pattern, char p) {
+bool startsWithIO(string s, string pattern) {
+    if (strLen(pattern) > strLen(s)) return false;
+    for (ptr_t i = s.x, j = pattern.x; i < s.y && j < pattern.y; i++, j++) {
+        if (ioHeap[i] != heap[j]) return false;
+    }
+    return true;
+}
+
+void addHit(int32_t k, int32_t off, inout bool found) {
+    i32heap[atomicAdd(groupHeapPtr, 4)/4] = int32_t(k) + off;
+    found = true;
+}
+
+bool grepBuffer(int32_t blockSize, string buf, string pattern, char p, int32_t off) {
     bool found = false;
     for (size_t i = 0, l = strLen(buf); i < blockSize; i+=32) {
         ptr_t idx = buf.x + i;
-        i64vec4 v = i64v4heap[idx / 32];
+        i64vec4 v = i64v4IOHeap[idx / 32];
         for (size_t j = 0, k = i, jdx = idx; j < 64; j += 8, idx++, k++, jdx++) {
             i8vec4 u = i8vec4((v >> j) & 0xff);
             if (any(equal(u, i8vec4(p)))) {
-                if (k < l && p == u.x && startsWith(string(jdx, buf.y), pattern)) { i32heap[heapPtr/4] = int32_t(k); heapPtr+=4; found = true;  }
-                if (k+8 < l && p == u.y && startsWith(string(jdx+8, buf.y), pattern)) { i32heap[heapPtr/4] = int32_t(k + 8); heapPtr+=4; found = true;  }
-                if (k+16 < l && p == u.z && startsWith(string(jdx+16, buf.y), pattern)) { i32heap[heapPtr/4] = int32_t(k + 16); heapPtr+=4; found = true;  }
-                if (k+24 < l && p == u.w && startsWith(string(jdx+24, buf.y), pattern)) { i32heap[heapPtr/4] = int32_t(k + 24); heapPtr+=4; found = true;  }
+                if (k < l && p == u.x && startsWithIO(string(jdx, buf.y), pattern)) addHit(k, off, found);
+                if (k+8 < l && p == u.y && startsWithIO(string(jdx+8, buf.y), pattern)) addHit(k + 8, off, found);
+                if (k+16 < l && p == u.z && startsWithIO(string(jdx+16, buf.y), pattern)) addHit(k + 16, off, found);
+                if (k+24 < l && p == u.w && startsWithIO(string(jdx+24, buf.y), pattern)) addHit(k + 24, off, found);
             }
         }
     }
@@ -32,75 +46,40 @@ void main() {
     string pattern = aGet(argv, 1);
     string filename = aGet(argv, 2);
 
-    if (ThreadID == 0) {
-        /*
-        FREE(
-            println(concat("Searching for pattern ", pattern));
-            println(concat("In file ", filename));
-        )
-            println(concat("Thread count ", str(ThreadCount)));
-            println(concat("Thread groups ", str(ThreadGroupCount)));
-            println(concat("Local thread count ", str(ThreadLocalCount)));
-            println(concat("Total heap ", str(ThreadCount * HEAP_SIZE)));
-            println(concat("IO size ", str(ThreadLocalCount * HEAP_SIZE)));
-        )
-        */
-        atomicAdd(programReturnValue, 1);
-    }
-    while(programReturnValue == 0);
+    if (ThreadID == 0) programReturnValue = 1;
+    controlBarrier(gl_ScopeDevice, gl_ScopeDevice, 0, 0);
+//    while (programReturnValue == 0);
 
-    int patternLength = strLen(pattern);
-    int blockSize = HEAP_SIZE-(((patternLength+31) / 32) * 32);
+    int32_t patternLength = strLen(pattern);
+    int32_t blockSize = HEAP_SIZE-(((patternLength+31) / 32) * 32);
 
-    int tgHeapStart = HEAP_SIZE * ThreadLocalCount * ThreadGroupID;
-    int tgHeapStart2 = HEAP_SIZE * ThreadLocalCount * ThreadGroupID + ThreadLocalCount * HEAP_SIZE/2;
+    ptr_t tgHeapStart = HEAP_SIZE * ThreadLocalCount * ThreadGroupID;
 
-    int wgBufSize = ThreadLocalCount * blockSize + patternLength;
+    int32_t wgBufSize = ThreadLocalCount * blockSize + patternLength;
     
     if (ThreadLocalID == 0) {
         done = 0;
-        wgOff = ThreadGroupID * ThreadLocalCount * blockSize;
+        wgOff = int64_t(ThreadGroupID * ThreadLocalCount) * int64_t(blockSize);
     }
 
     bool found = false;
-    int startp = toIndexPtr(heapPtr);
-
     char p = heap[pattern.x];
-
-/*
-    io r0, r1;
-    if (ThreadLocalID == 0) {
-        wgBuf = string(tgHeapStart, tgHeapStart + wgBufSize);
-        r0 = read(filename, wgOff, wgBufSize, wgBuf);
-    }
-*/
 
     while (done == 0) {
         FREE(FREE_IO(
-            barrier();
-            memoryBarrier();
+            barrier(); memoryBarrier();
 
             if (ThreadLocalID == 0) {
-                /*
-                r1 = read(filename, wgOff + ThreadCount * blockSize, wgBufSize, 
-                    wgBuf.x == tgHeapStart
-                    ? string(tgHeapStart2, tgHeapStart2 + wgBufSize)
-                    : string(tgHeapStart, tgHeapStart + wgBufSize)
-                );
-                wgBuf = awaitIO(r0);
-                r0 = r1;
-                */
-                wgBuf = readSync(filename, wgOff, wgBufSize, string(tgHeapStart, tgHeapStart + wgBufSize));
+                io r = read(filename, wgOff, wgBufSize, string(tgHeapStart, tgHeapStart + wgBufSize));
+                wgBuf = awaitIO(r, true);
                 
-                //if (wgOff > 1000000000) wgBuf.y = wgBuf.x;
-
                 if (strLen(wgBuf) != wgBufSize) {
                     done = strLen(wgBuf) == 0 ? 2 : 1;
                 }
+                groupHeapPtr = tgHeapStart;
             }
 
-            barrier();
-            memoryBarrier();
+            barrier(); memoryBarrier();
 
             if (done == 2) break;
             
@@ -109,33 +88,30 @@ void main() {
                 min(wgBuf.y, wgBuf.x + (ThreadLocalID+1) * blockSize + patternLength)
             );
 
-            int start = startp;
-            heapPtr = startp * 4;
+            bool blockFound = grepBuffer(blockSize, buf, pattern, p, ThreadLocalID * blockSize);
+            found = found || blockFound;
 
-            found = grepBuffer(blockSize, buf, pattern, p) || found;
-
-            int end = heapPtr / 4;
-
-            barrier();
-            memoryBarrier();
-
-            for (int j = start; j < end; j++) {
-                str(int64_t(i32heap[j] + ThreadLocalID * blockSize) + wgOff);
-                _w('\n');
-            }
-
-            barrier();
-            memoryBarrier();
-
-            if (end * 4 != heapPtr) print(string(end*4, heapPtr));
-
-            barrier();
-            memoryBarrier();
+            barrier(); memoryBarrier();
 
             if (ThreadLocalID == 0) {
-                // atomicMax(io_pad_3, wgOff + strLen(wgBuf));
-                wgOff += ThreadCount * blockSize;
+                ioHeapPtr = tgHeapStart;
+                ptr_t start = tgHeapStart / 4;
+                ptr_t end = groupHeapPtr / 4;
+                
+                if (start != end) {
+                    heapPtr = groupHeapPtr;
+                    for (int j = start; j < end; j++) {
+                        str(int64_t(i32heap[j]) + wgOff);
+                        _w('\n');
+                    }
+                    print(string(groupHeapPtr, heapPtr));
+                }
+
+                wgOff += int64_t(ThreadCount * blockSize);
+                
             }
+
+            barrier(); memoryBarrier();
         ))
     }
 

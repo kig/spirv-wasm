@@ -186,6 +186,8 @@ class ComputeApplication
 
         timeStart();
 
+        heapGlobalsOffset = heapSize * threadCount;
+
         heapBufferSize = heapSize * (threadCount + 1);
         ioRequestsBufferSize = ioSize;
         ioHeapBufferSize = heapBufferSize;
@@ -954,18 +956,19 @@ class ComputeApplication
         }
         if (req.ioType == IO_READ) {
             if (verbose) printf("Read %s\n", filename);
-            ioReqs->requests[i].status = IO_IN_PROGRESS;
+            req.status = IO_IN_PROGRESS;
             FILE *fd = openFile(filename, file, "r");
             fseek(fd, req.offset, SEEK_SET);
             int32_t bytes = fread(heapBuf + req.result_start, 1, req.count, fd);
             if (file == NULL) fclose(fd);
             //printf("Result:\n%s\n", heapBuf + req.result_start);
             //app->writeIOHeapToGPU(req.result_start, bytes);
-            ioReqs->requests[i].result_end = req.result_start + bytes;
-            ioReqs->requests[i].status = IO_COMPLETE;
+            req.result_end = req.result_start + bytes;
+            req.status = IO_COMPLETE;
+            ioReqs->requests[i] = req;
             if (verbose) printf("IO completed: %d - status %d\n", i, ioReqs->requests[i].status);
         } else if (req.ioType == IO_WRITE) {
-            ioReqs->requests[i].status = IO_IN_PROGRESS;
+            req.status = IO_IN_PROGRESS;
             FILE *fd = openFile(filename, file, "r+");
             if (req.offset < 0) {
                 fseek(fd, -1-req.offset, SEEK_END);
@@ -975,8 +978,9 @@ class ComputeApplication
             //app->readIOHeapFromGPU(req.result_start, req.count);
             int bytes = fwrite(heapBuf + req.result_start, 1, req.count, fd);
             if (file == NULL) fclose(fd);
-            ioReqs->requests[i].result_end = req.result_start + bytes;
-            ioReqs->requests[i].status = IO_COMPLETE;
+            req.result_end = req.result_start + bytes;
+            req.status = IO_COMPLETE;
+            ioReqs->requests[i] = req;
             if (verbose) printf("IO completed: %d - status %d\n", i, ioReqs->requests[i].status);
         } else if (req.ioType == IO_CREATE) {
             ioReqs->requests[i].status = IO_IN_PROGRESS;

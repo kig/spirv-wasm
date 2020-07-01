@@ -97,6 +97,7 @@ io requestIO(ioRequest request) {
         }
         request.data = b;
     }
+
     int32_t reqNum = atomicAdd(ioCount, 1); // % maxIOCount;
     ioRequests[reqNum] = request;
     token.index = reqNum;
@@ -107,6 +108,7 @@ alloc_t awaitIO(io request, inout int32_t status, bool noCopy) {
     if (ioRequests[request.index].status != IO_NONE && ioRequests[request.index].status < IO_COMPLETE) {
         while (ioRequests[request.index].status < IO_COMPLETE);
     }
+
     ioRequest req = ioRequests[request.index];
     status = req.status;
 
@@ -138,6 +140,10 @@ alloc_t awaitIO(io request, inout int32_t status) {
 
 alloc_t awaitIO(io request) {
     return awaitIO(request, errno);
+}
+
+alloc_t awaitIO(io request, bool noCopy) {
+    return awaitIO(request, errno, noCopy);
 }
 
 io read(string filename, int64_t offset, size_t count, string buf) {
