@@ -1,4 +1,4 @@
-layout ( local_size_x = 255, local_size_y = 1, local_size_z = 1 ) in;
+layout ( local_size_x = 320, local_size_y = 1, local_size_z = 1 ) in;
 
 #define HEAP_SIZE 4096
 
@@ -56,7 +56,7 @@ void main() {
     ptr_t tgHeapStart = HEAP_SIZE * ThreadLocalCount * ThreadGroupID;
 
     int32_t wgBufSize = ThreadLocalCount * blockSize + patternLength;
-    
+
     if (ThreadLocalID == 0) {
         done = 0;
         wgOff = int64_t(ThreadGroupID * ThreadLocalCount) * int64_t(blockSize);

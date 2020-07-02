@@ -84,7 +84,9 @@ struct ioRequest {
     int32_t result_end;
 };
 
+#ifndef IO_REQUEST_COUNT
 #define IO_REQUEST_COUNT 262144
+#endif
 
 struct ioRequests {
     int32_t ioCount;
@@ -134,9 +136,9 @@ class ComputeApplication
     VkBuffer ioHeapBuffer;
     VkDeviceMemory ioHeapMemory;
 
-    uint32_t heapBufferSize;
-    uint32_t ioRequestsBufferSize;
-    uint32_t ioHeapBufferSize;
+    uint32_t heapBufferSize = 0;
+    uint32_t ioRequestsBufferSize = 0;
+    uint32_t ioHeapBufferSize = 0;
 
     std::vector<const char *> enabledLayers;
 
@@ -152,15 +154,15 @@ class ComputeApplication
     uint32_t vulkanDeviceIndex = 0;
 
     uint32_t heapSize = 4096;
+    uint32_t ioHeapSize = 4096;
     uint32_t ioSize = sizeof(ioRequests);
 
     uint32_t workSize[3] = {1, 1, 1};
+    uint32_t localSize[3] = {1, 1, 1};
 
     const char *programFileName;
 
-    uint32_t threadCount = workSize[0] * workSize[1] * workSize[2] * 1;
-
-    uint32_t heapGlobalsOffset = heapSize * threadCount;
+    uint32_t heapGlobalsOffset = 0;
 
     volatile bool ioRunning = true;
     volatile bool ioReset = true;
@@ -169,6 +171,11 @@ class ComputeApplication
 
     bool verbose = false;
     bool timings = false;
+
+    uint32_t *code = NULL;
+    uint32_t filelength;
+
+    uint32_t threadCount = 0;
 
   public:
 
@@ -186,11 +193,17 @@ class ComputeApplication
 
         timeStart();
 
+        readShader();
+
+        timeIval("Read shader");
+
+        threadCount = workSize[0] * workSize[1] * workSize[2] * localSize[0] * localSize[1] * localSize[2];
+
         heapGlobalsOffset = heapSize * threadCount;
 
-        heapBufferSize = heapSize * (threadCount + 1);
+        if (heapBufferSize == 0) heapBufferSize = heapSize * (threadCount + 1);
+        if (ioHeapBufferSize == 0) ioHeapBufferSize = ioHeapSize * threadCount;
         ioRequestsBufferSize = ioSize;
-        ioHeapBufferSize = heapBufferSize;
 
         // Initialize vulkan:
         createInstance();
@@ -214,7 +227,7 @@ class ComputeApplication
 
         timeIval("Create compute pipeline");
 
-       createCommandBuffer();
+        createCommandBuffer();
 
         timeIval("Create command buffer");
 
@@ -701,7 +714,6 @@ class ComputeApplication
     // The data has been padded, so that it fits into an array uint32_t.
     uint32_t *readFile(uint32_t &length, const char *filename)
     {
-
         FILE *fp = fopen(filename, "rb");
         if (fp == NULL)
         {
@@ -713,7 +725,7 @@ class ComputeApplication
         long filesize = ftell(fp);
         fseek(fp, 0, SEEK_SET);
 
-        long filesizepadded = long(ceil(filesize / 4.0)) * 4;
+        long filesizepadded = ((filesize+3) / 4) * 4;
 
         // read file contents.
         char *str = new char[filesizepadded];
@@ -730,6 +742,45 @@ class ComputeApplication
         return (uint32_t *)str;
     }
 
+    void parseLocalSize(uint32_t *code) {
+        //printf("%d\n", filelength);
+        uint32_t len32 = filelength / 4;
+        if (len32 <= 5) {
+            fprintf(stderr, "Shader file empty: %s\n", programFileName);
+            assert(len32 > 5);
+        }
+        uint32_t magicNumber = 0x07230203;
+        assert(magicNumber == code[0]);
+        for (int i = 5; i < len32; i++) {
+            uint32_t op = code[i];
+            uint32_t wordCount = op >> 16;
+            uint32_t opCode = op & 0xffff;
+            //printf("Op: %8x OpCode: %d WordCount:%d\n", op, opCode, wordCount);
+            int j = i+1;
+            if (opCode == 16) { // OpExecutionMode
+                uint32_t entryPoint = code[j++];
+                uint32_t mode = code[j++];
+                //printf("EntryPoint: %d Mode: %d\n", entryPoint, mode);
+                if (mode == 17) { // LocalSize
+                    localSize[0] = code[j++];
+                    localSize[1] = code[j++];
+                    localSize[2] = code[j++];
+                    //printf("LocalSize: %d %d %d\n", localSize[0], localSize[1], localSize[2]);
+                }
+            }
+            i += wordCount > 0 ? wordCount-1 : 0;
+        }
+    }
+
+    void readShader() {
+        if (code != NULL) {
+            free(code);
+            code = NULL;
+        }
+        code = readFile(filelength, programFileName);
+        parseLocalSize(code);
+    }
+
     void createComputePipeline()
     {
         /*
@@ -739,10 +790,6 @@ class ComputeApplication
         /*
         Create a shader module. A shader module basically just encapsulates some shader code.
         */
-        uint32_t filelength;
-        // the code in comp.spv was created by running the command:
-        // glslangValidator.exe -V shader.comp
-        uint32_t *code = readFile(filelength, programFileName);
         VkShaderModuleCreateInfo createInfo = {};
         createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
         createInfo.pCode = code;
@@ -750,6 +797,8 @@ class ComputeApplication
 
         VK_CHECK_RESULT(vkCreateShaderModule(device, &createInfo, NULL, &computeShaderModule));
         delete[] code;
+
+        timeIval("vkCreateShaderModule");
 
         /*
         Now let us actually create the compute pipeline.
@@ -774,6 +823,8 @@ class ComputeApplication
             .pSetLayouts = &descriptorSetLayout};
         VK_CHECK_RESULT(vkCreatePipelineLayout(device, &pipelineLayoutCreateInfo, NULL, &pipelineLayout));
 
+        timeIval("vkCreatePipelineLayout");
+
         VkComputePipelineCreateInfo pipelineCreateInfo = {
             .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
             .stage = shaderStageCreateInfo,
@@ -784,6 +835,9 @@ class ComputeApplication
         */
         VK_CHECK_RESULT(
             vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &pipelineCreateInfo, NULL, &pipeline));
+
+        timeIval("vkCreateComputePipelines");
+
     }
 
     void createCommandBuffer()
@@ -932,7 +986,11 @@ class ComputeApplication
         return fopen(filename, mode);
     }
 
-    static void handleIORequest(ComputeApplication *app, bool verbose, ioRequests *ioReqs, char *heapBuf, int i, volatile int64_t *completed, int threadIdx) {
+    static void closeFile(FILE* file) {
+        if (file != NULL) fclose(file);
+    }
+
+    static void handleIORequest(ComputeApplication *app, bool verbose, ioRequests *ioReqs, char *heapBuf, int i, volatile bool *completed, int threadIdx) {
         while (ioReqs->requests[i].status != IO_START);
         ioRequest req = ioReqs->requests[i];
         if (verbose) printf("IO req %d: t:%d s:%d off:%ld count:%ld fn_start:%d fn_end:%d res_start:%d res_end:%d\n", i, req.ioType, req.status, req.offset, req.count, req.filename_start, req.filename_end, req.result_start, req.result_end);
@@ -949,71 +1007,60 @@ class ComputeApplication
         } else {
             VkDeviceSize filenameLength = req.filename_end - req.filename_start;
             if (verbose) printf("Filename length %lu\n", filenameLength);
-            filename = (char*)malloc(filenameLength + 1);
-            //app->readIOHeapFromGPU(req.filename_start, filenameLength);
+            filename = (char*)calloc(filenameLength + 1, 1);
             memcpy(filename, heapBuf + req.filename_start, filenameLength);
             filename[filenameLength] = 0;
         }
         if (req.ioType == IO_READ) {
             if (verbose) printf("Read %s\n", filename);
-            req.status = IO_IN_PROGRESS;
             FILE *fd = openFile(filename, file, "r");
             fseek(fd, req.offset, SEEK_SET);
             int32_t bytes = fread(heapBuf + req.result_start, 1, req.count, fd);
-            if (file == NULL) fclose(fd);
-            //printf("Result:\n%s\n", heapBuf + req.result_start);
-            //app->writeIOHeapToGPU(req.result_start, bytes);
+            if (file == NULL) closeFile(fd);
             req.result_end = req.result_start + bytes;
             req.status = IO_COMPLETE;
             ioReqs->requests[i] = req;
             if (verbose) printf("IO completed: %d - status %d\n", i, ioReqs->requests[i].status);
         } else if (req.ioType == IO_WRITE) {
-            req.status = IO_IN_PROGRESS;
             FILE *fd = openFile(filename, file, "r+");
             if (req.offset < 0) {
                 fseek(fd, -1-req.offset, SEEK_END);
             } else {
                 fseek(fd, req.offset, SEEK_SET);
             }
-            //app->readIOHeapFromGPU(req.result_start, req.count);
             int bytes = fwrite(heapBuf + req.result_start, 1, req.count, fd);
-            if (file == NULL) fclose(fd);
+            if (file == NULL) closeFile(fd);
             req.result_end = req.result_start + bytes;
             req.status = IO_COMPLETE;
             ioReqs->requests[i] = req;
             if (verbose) printf("IO completed: %d - status %d\n", i, ioReqs->requests[i].status);
         } else if (req.ioType == IO_CREATE) {
-            ioReqs->requests[i].status = IO_IN_PROGRESS;
             FILE *fd = openFile(filename, file, "w");
-            //app->readIOHeapFromGPU(req.result_start, req.count);
             int bytes = fwrite(heapBuf + req.result_start, 1, req.count, fd);
-            if (file == NULL) fclose(fd);
+            if (file == NULL) closeFile(fd);
             ioReqs->requests[i].result_end = req.result_start + bytes;
             ioReqs->requests[i].status = IO_COMPLETE;
         } else if (req.ioType == IO_DELETE) {
-            ioReqs->requests[i].status = IO_IN_PROGRESS;
             remove(filename);
             ioReqs->requests[i].status = IO_COMPLETE;
         } else if (req.ioType == IO_TRUNCATE) {
-            ioReqs->requests[i].status = IO_IN_PROGRESS;
             truncate(filename, req.count);
             ioReqs->requests[i].status = IO_COMPLETE;
         } else {
             ioReqs->requests[i].status = IO_ERROR;
         }
-        //app->writeIOToGPU((8 + i * 8) * 4, 8 * 4);
         if (threadIdx > 0) {
             std::lock_guard<std::mutex> guard(completed_mutex);
-            completed[threadIdx] = 1;
+            completed[threadIdx] = true;
         }
     }
 
     static void handleIORequests(ComputeApplication *app, bool verbose, ioRequests *ioReqs, char *heapBuf, volatile bool *ioRunning, volatile bool *ioReset) {
 
-        int threadCount = 16;
+        int threadCount = 48;
         std::thread threads[threadCount];
         int threadIdx = 0;
-        volatile int64_t *completed = (volatile int64_t*)malloc(sizeof(int64_t) * threadCount);
+        volatile bool *completed = (volatile bool*)malloc(sizeof(bool) * threadCount);
 
         int32_t lastReqNum = 0;
         if (verbose) printf("IO Running\n");
@@ -1033,7 +1080,7 @@ class ComputeApplication
                     if (tidx == threadCount) {
                         // Find completed thread.
                         for (int j = 0; j < threadCount; j++) {
-                            if (completed[j] == 1) {
+                            if (completed[j]) {
                                 tidx = j;
                                 threads[j].join();
                                 break;
@@ -1047,7 +1094,7 @@ class ComputeApplication
                         tidx = threadIdx++;
                     }
                     std::lock_guard<std::mutex> guard(completed_mutex);
-                    completed[tidx] = 0;
+                    completed[tidx] = false;
                     threads[tidx] = std::thread(handleIORequest, app, verbose, ioReqs, heapBuf, i, completed, tidx);
                 } else {
                     handleIORequest(app, verbose, ioReqs, heapBuf, i, completed, -1);
@@ -1056,7 +1103,7 @@ class ComputeApplication
             lastReqNum = reqNum;
         }
         while (threadIdx > 0) threads[--threadIdx].join();
-        for (int i=0; i < threadCount; i++) completed[i] = 0;
+        for (int i=0; i < threadCount; i++) completed[i] = false;
         if (verbose) printf("Exited IO thread\n");
     }
 

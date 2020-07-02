@@ -98,7 +98,8 @@ io requestIO(ioRequest request) {
         request.data = b;
     }
 
-    int32_t reqNum = atomicAdd(ioCount, 1); // % maxIOCount;
+    // Replace this with a proper ring buffer that doesn't have issues with wrapping ioCounts.
+    int32_t reqNum = atomicAdd(ioCount, 1) % maxIOCount;
     ioRequests[reqNum] = request;
     token.index = reqNum;
     return token;

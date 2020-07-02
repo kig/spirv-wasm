@@ -7,10 +7,10 @@ class Grep : public ComputeApplication
 public:
 
     Grep() {
+        ioHeapSize = 4096;
         heapSize = 4096;
 
         workSize[0] = 100;
-        threadCount = workSize[0] * workSize[1] * workSize[2] * 255;
 
         timings = true;
     }

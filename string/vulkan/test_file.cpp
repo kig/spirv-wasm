@@ -5,10 +5,8 @@ class FileApplication : public ComputeApplication
   public:
     FileApplication() {
         heapSize = 8192;
+        ioHeapSize = 8192;
         workSize[0] = 80;
-        threadCount = workSize[0] * workSize[1] * workSize[2] * 16;
-
-        heapGlobalsOffset = heapSize * threadCount;
     }
 
     void runProgram() {
