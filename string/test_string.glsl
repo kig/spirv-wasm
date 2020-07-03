@@ -1,8 +1,9 @@
 #define HEAP_SIZE 8192
+#define IO_HEAP_SIZE 1024
 
 layout ( local_size_x = 200, local_size_y = 1, local_size_z = 1 ) in;
 
-layout(std430, binding = 1) buffer outputBuffer { int32_t outputs[]; };
+layout(std430, binding = 2) volatile buffer outputBuffer { int32_t outputs[]; };
 
 
 #include "string.glsl"
@@ -13,7 +14,7 @@ void main() {
 
 	ptr_t heapTop = heapPtr;
 	
-	ptr_t op = ThreadID * 1024;
+	ptr_t op = ThreadID * IO_HEAP_SIZE/4;
 
 	string emptys = "";
 

@@ -1,12 +1,13 @@
 #include "compute_application.hpp"
 
-class FileApplication : public ComputeApplication
+class App : public ComputeApplication
 {
   public:
-    FileApplication() {
+    App() {
         heapSize = 8192;
         ioHeapSize = 8192;
         workSize[0] = 80;
+        verbose = false;
     }
 
     void runProgram() {
@@ -26,7 +27,7 @@ class FileApplication : public ComputeApplication
 
 int main(int argc, char *argv[])
 {
-    FileApplication app;
+    App app;
 
     try
     {

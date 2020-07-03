@@ -1,7 +1,5 @@
 layout ( local_size_x = 320, local_size_y = 1, local_size_z = 1 ) in;
 
-#define HEAP_SIZE 4096
-
 #include "file.glsl"
 
 shared int done;
@@ -24,6 +22,13 @@ void addHit(int32_t k, int32_t off, inout bool found) {
 
 bool grepBuffer(int32_t blockSize, string buf, string pattern, char p, int32_t off) {
     bool found = false;
+    /*
+    for (size_t i = 0, l = strLen(buf); i < blockSize; i++) {
+        ptr_t idx = buf.x + i;
+        if (i < l && p == ioHeap[idx] && startsWithIO(string(idx, buf.y), pattern)) addHit(i, off, found);
+    }
+    return found;
+    */
     for (size_t i = 0, l = strLen(buf); i < blockSize; i+=32) {
         ptr_t idx = buf.x + i;
         i64vec4 v = i64v4IOHeap[idx / 32];
@@ -48,7 +53,6 @@ void main() {
 
     if (ThreadID == 0) programReturnValue = 1;
     controlBarrier(gl_ScopeDevice, gl_ScopeDevice, 0, 0);
-//    while (programReturnValue == 0);
 
     int32_t patternLength = strLen(pattern);
     int32_t blockSize = HEAP_SIZE-(((patternLength+31) / 32) * 32);
@@ -70,6 +74,8 @@ void main() {
             barrier(); memoryBarrier();
 
             if (ThreadLocalID == 0) {
+                ioHeapPtr = tgHeapStart;
+                
                 io r = read(filename, wgOff, wgBufSize, string(tgHeapStart, tgHeapStart + wgBufSize));
                 wgBuf = awaitIO(r, true);
                 

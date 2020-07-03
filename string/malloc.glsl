@@ -7,6 +7,10 @@
 
 #define INDEX_SIZE 4
 
+#ifndef HEAP_SIZE
+#define HEAP_SIZE 4096
+#endif
+
 #define FREE(f) { int32_t _hp_ = heapPtr; f; heapPtr = _hp_; }
 
 layout(std430, binding = 0) buffer indexBuf { ptr_t indexHeap[]; };
