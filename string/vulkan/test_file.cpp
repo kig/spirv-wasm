@@ -4,9 +4,7 @@ class App : public ComputeApplication
 {
   public:
     App() {
-        heapSize = 8192;
-        ioHeapSize = 8192;
-        workSize[0] = 80;
+        workSize[0] = 4;
         verbose = false;
     }
 

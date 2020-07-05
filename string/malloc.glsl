@@ -108,3 +108,7 @@ alloc_t malloc(size_t len, size_t align) {
 ptr_t toIndexPtr(ptr_t ptr) {
     return ((ptr+(INDEX_SIZE-1)) / INDEX_SIZE);
 }
+
+ptr_t fromIndexPtr(ptr_t ptr) {
+    return ptr * INDEX_SIZE;
+}

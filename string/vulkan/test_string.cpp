@@ -4,9 +4,8 @@ class App : public ComputeApplication
 {
   public:
     App() {
-        heapSize = 8192;
-        ioHeapSize = 1024;
-        workSize[0] = 80;
+        toGPUSize = 10;
+        workSize[0] = 50;
         timings = true;
         runIO = false;
     }
@@ -14,16 +13,18 @@ class App : public ComputeApplication
     void runProgram() {
         std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
         int i;
-        for (i = 0; i < 10; i++) {
+        for (i = 0; i < 100; i++) {
             startCommandBuffer();
             waitCommandBuffer();
         }
+        bufferCopy(fromGPUBuffer, 0, heapBuffer, 0, heapBufferSize);
+        readFromGPUIO(0, fromGPUBufferSize);
         std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
 
     	for (int j = 0; j < threadCount; j++) {
 	    	bool allOk = true;
-	        for (int k = 0; k < ioHeapSize/4; k++) {
-	            int ok = ((int*)mappedIOHeapMemory)[j*(ioHeapSize/4) + k];
+	        for (int k = 0; k < fromGPUSize/4; k++) {
+	            int ok = ((int*)mappedFromGPUMemory)[(j+1)*(fromGPUSize/4) + k - 256];
 	            if (ok == 0) break;
 	            if (ok != 1) {
 	            	printf("[%d] Test %d failed: %d\n", k, i, ok);

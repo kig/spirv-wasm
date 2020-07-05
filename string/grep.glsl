@@ -1,4 +1,4 @@
-layout ( local_size_x = 320, local_size_y = 1, local_size_z = 1 ) in;
+layout ( local_size_x = 256, local_size_y = 1, local_size_z = 1 ) in;
 
 #include "file.glsl"
 
@@ -10,7 +10,7 @@ shared ptr_t groupHeapPtr;
 bool startsWithIO(string s, string pattern) {
     if (strLen(pattern) > strLen(s)) return false;
     for (ptr_t i = s.x, j = pattern.x; i < s.y && j < pattern.y; i++, j++) {
-        if (ioHeap[i] != heap[j]) return false;
+        if (fromCPU[i] != heap[j]) return false;
     }
     return true;
 }
@@ -25,13 +25,13 @@ bool grepBuffer(int32_t blockSize, string buf, string pattern, char p, int32_t o
     /*
     for (size_t i = 0, l = strLen(buf); i < blockSize; i++) {
         ptr_t idx = buf.x + i;
-        if (i < l && p == ioHeap[idx] && startsWithIO(string(idx, buf.y), pattern)) addHit(i, off, found);
+        if (i < l && p == fromCPU[idx] && startsWithIO(string(idx, buf.y), pattern)) addHit(i, off, found);
     }
     return found;
     */
     for (size_t i = 0, l = strLen(buf); i < blockSize; i+=32) {
         ptr_t idx = buf.x + i;
-        i64vec4 v = i64v4IOHeap[idx / 32];
+        i64vec4 v = i64v4fromCPU[idx / 32];
         for (size_t j = 0, k = i, jdx = idx; j < 64; j += 8, idx++, k++, jdx++) {
             i8vec4 u = i8vec4((v >> j) & 0xff);
             if (any(equal(u, i8vec4(p)))) {
@@ -74,7 +74,7 @@ void main() {
             barrier(); memoryBarrier();
 
             if (ThreadLocalID == 0) {
-                ioHeapPtr = tgHeapStart;
+                fromCPUPtr = tgHeapStart;
                 
                 io r = read(filename, wgOff, wgBufSize, string(tgHeapStart, tgHeapStart + wgBufSize));
                 wgBuf = awaitIO(r, true);
@@ -100,7 +100,8 @@ void main() {
             barrier(); memoryBarrier();
 
             if (ThreadLocalID == 0) {
-                ioHeapPtr = tgHeapStart;
+                fromCPUPtr = tgHeapStart;
+                toCPUPtr = tgHeapStart;
                 ptr_t start = tgHeapStart / 4;
                 ptr_t end = groupHeapPtr / 4;
                 

@@ -11,9 +11,13 @@
 #include <thread>
 #include <unistd.h>
 #include <mutex>
+#include <map>
+#include <filesystem>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+
+#include "io.hpp"
 
 #ifdef WIN32
 #include <io.h>
@@ -62,137 +66,6 @@ inline void PnextChainPushBack(MainT* mainStruct, NewT* newStruct)
     lastStruct->pNext = newStruct;
 }
 
-#define IO_READ 1
-#define IO_WRITE 2
-#define IO_CREATE 3
-#define IO_DELETE 4
-#define IO_TRUNCATE 5
-
-#define IO_LISTEN 6
-#define IO_ACCEPT 7
-#define IO_CLOSE 8
-#define IO_OPEN 9
-#define IO_FSYNC 10
-#define IO_SEND 11
-#define IO_RECV 12
-#define IO_TIMENOW 13
-#define IO_TIMEOUT 14
-#define IO_CD 15
-#define IO_LS 16
-#define IO_RMDIR 17
-#define IO_CONNECT 24
-#define IO_GETCWD 25
-#define IO_STAT 26
-#define IO_MOVE 27
-#define IO_COPY 28
-#define IO_COPY_RANGE 29
-#define IO_MKDIR 30
-
-#define IO_RUN_CMD 31
-#define IO_EXIT 32
-
-/*
-The design for GPU IO
----
-
-Workgroups submit tasks in sync -> readv / writev approach is beneficial for sequential reads/writes. Readv/writev are internally single-threaded, so limited by memcpy to 6-8 GB/s.
-
-Lots of parallelism.
-Ordering of writes across workgroups requires a way to sequence IOs (either reduce to order on the GPU or reassemble correct order on the CPU.)
-
-Compression of data on the PCIe bus would help. 32 * zstd --format=lz4 --fast -T1 file -o /dev/null goes at 38 GB/s.
-
-Need benchmark suite
----
-
- - Different block sizes
- - Different access patterns (sequential, random)
-     - Scatter writes
-     - Sequential writes
-     - Gather reads
-     - Sequential reads
-     - Combined reads & writes
- - Different levels of parallelism
-    - 1 IO per thread group
-    - each thread does its own IO
-    - 1 IO on ThreadID 0
-    - IOs across all invocation
- - Compression
- - From hot cache on CPU
- - From cold cache
- - With GPU-side cache
- - Repeated access to same file
- - Access to multiple files
-
-Does it help to combine reads & writes into sequential blocks on CPU-side when possible, or is it faster to do IOs ASAP?
-
-Caching file descriptors, helps or not?
-
-
-
-IORING_OP_NOP
-// This operation does nothing at all; the benefits of doing nothing asynchronously are minimal, but sometimes a placeholder is useful.
-IORING_OP_READV
-IORING_OP_WRITEV
-// Submit a readv() or write() operation — the core purpose for io_uring in most settings.
-IORING_OP_READ_FIXED
-IORING_OP_WRITE_FIXED
-// These opcodes also submit I/O operations, but they use "registered" buffers that are already mapped into the kernel, reducing the amount of total overhead.
-IORING_OP_FSYNC
-// Issue an fsync() call — asynchronous synchronization, in other words.
-IORING_OP_POLL_ADD
-IORING_OP_POLL_REMOVE
-// IORING_OP_POLL_ADD will perform a poll() operation on a set of file descriptors. It's a one-shot operation that must be resubmitted after it completes; it can be explicitly canceled with IORING_OP_POLL_REMOVE. Polling this way can be used to asynchronously keep an eye on a set of file descriptors. The io_uring subsystem also supports a concept of dependencies between operations; a poll could be used to hold off on issuing another operation until the underlying file descriptor is ready for it.
-
-IORING_OP_SYNC_FILE_RANGE
-// Perform a sync_file_range() call — essentially an enhancement of the existing fsync() support, though without all of the guarantees of fsync().
-IORING_OP_SENDMSG
-IORING_OP_RECVMSG (5.3)
-// These operations support the asynchronous sending and receiving of packets over the network with sendmsg() and recvmsg().
-IORING_OP_TIMEOUT
-IORING_OP_TIMEOUT_REMOVE
-// This operation completes after a given period of time, as measured either in seconds or number of completed io_uring operations. It is a way of forcing a waiting application to wake up even if it would otherwise continue sleeping for more completions.
-IORING_OP_ACCEPT
-IORING_OP_CONNECT
-// Accept a connection on a socket, or initiate a connection to a remote peer.
-IORING_OP_ASYNC_CANCEL
-// Attempt to cancel an operation that is currently in flight. Whether this attempt will succeed depends on the type of operation and how far along it is.
-IORING_OP_LINK_TIMEOUT
-// Create a timeout linked to a specific operation in the ring. Should that operation still be outstanding when the timeout happens, the kernel will attempt to cancel the operation. If, instead, the operation completes first, the timeout will be canceled.
-
-IORING_OP_FALLOCATE
-// Manipulate the blocks allocated for a file using fallocate()
-IORING_OP_OPENAT
-IORING_OP_OPENAT2
-IORING_OP_CLOSE
-// Open and close files
-IORING_OP_FILES_UPDATE
-// Frequently used files can be registered with io_uring for faster access; this command is a way of (asynchronously) adding files to the list (or removing them from the list).
-IORING_OP_STATX
-// Query information about a file using statx().
-IORING_OP_READ
-IORING_OP_WRITE
-// These are like IORING_OP_READV and IORING_OP_WRITEV, but they use the simpler interface that can only handle a single buffer.
-IORING_OP_FADVISE
-IORING_OP_MADVISE
-// Perform the posix_fadvise() and madvise() system calls asynchronously.
-IORING_OP_SEND
-IORING_OP_RECV
-// Send and receive network data.
-IORING_OP_EPOLL_CTL
-// Perform operations on epoll file-descriptor sets with epoll_ctl()
-
-*/
-
-
-#define IO_NONE 0
-#define IO_START 1
-#define IO_RECEIVED 2
-#define IO_IN_PROGRESS 3
-#define IO_COMPLETE 4
-#define IO_ERROR 5
-#define IO_HANDLED 255
-
 struct ioRequest {
     int32_t ioType;
     int32_t status;
@@ -202,7 +75,13 @@ struct ioRequest {
     int32_t filename_end;
     int32_t result_start;
     int32_t result_end;
-};
+    int32_t _pad10;
+    int32_t _pad11;
+    int32_t _pad12;
+    int32_t _pad13;
+    int32_t _pad14;
+    int32_t _pad15;
+}; // 64 bytes
 
 #ifndef IO_REQUEST_COUNT
 #define IO_REQUEST_COUNT 262144
@@ -219,11 +98,18 @@ struct ioRequests {
     int32_t _pad7;
     int32_t _pad8;
     int32_t _pad9;
+    int32_t _pad10;
+    int32_t _pad11;
+    int32_t _pad12;
+    int32_t _pad13;
+    int32_t _pad14;
+    int32_t _pad15;
     ioRequest requests[IO_REQUEST_COUNT];
 };
 
 
 static std::mutex completed_mutex;
+static std::mutex fileCache_mutex;
 
 
 class ComputeApplication
@@ -253,28 +139,39 @@ class ComputeApplication
     VkBuffer ioRequestsBuffer;
     VkDeviceMemory ioRequestsMemory;
 
-    VkBuffer ioHeapBuffer;
-    VkDeviceMemory ioHeapMemory;
+    VkBuffer toGPUBuffer;
+    VkDeviceMemory toGPUMemory;
+
+    VkBuffer fromGPUBuffer;
+    VkDeviceMemory fromGPUMemory;
 
     uint32_t heapBufferSize = 0;
     uint32_t ioRequestsBufferSize = 0;
-    uint32_t ioHeapBufferSize = 0;
+    uint32_t toGPUBufferSize = 0;
+    uint32_t fromGPUBufferSize = 0;
 
     std::vector<const char *> enabledLayers;
 
     VkQueue queue;
     VkFence fence;
 
+    VkCommandPool copyCommandPool;
+    VkCommandBuffer copyCommandBuffer;
+    VkFence copyFence;
+    VkQueue copyQueue;
+
     void *mappedHeapMemory = NULL;
     void *mappedIOMemory = NULL;
-    void *mappedIOHeapMemory = NULL;
+    void *mappedToGPUMemory = NULL;
+    void *mappedFromGPUMemory = NULL;
 
     uint32_t queueFamilyIndex;
 
     uint32_t vulkanDeviceIndex = 0;
 
     uint32_t heapSize = 4096;
-    uint32_t ioHeapSize = 4096;
+    uint32_t fromGPUSize = 4096;
+    uint32_t toGPUSize = 4096;
     uint32_t ioSize = sizeof(ioRequests);
 
     uint32_t workSize[3] = {1, 1, 1};
@@ -323,8 +220,14 @@ class ComputeApplication
         heapGlobalsOffset = heapSize * threadCount;
 
         if (heapBufferSize == 0) heapBufferSize = heapSize * (threadCount + 1);
-        if (ioHeapBufferSize == 0) ioHeapBufferSize = ioHeapSize * threadCount;
+        if (toGPUBufferSize == 0) toGPUBufferSize = toGPUSize * threadCount;
+        if (fromGPUBufferSize == 0) fromGPUBufferSize = fromGPUSize * threadCount;
         ioRequestsBufferSize = ioSize;
+
+        size_t totalIOSize = ioRequestsBufferSize + toGPUBufferSize + fromGPUBufferSize;
+        if (verbose || timings) fprintf(stderr, "IO buffers: %zu\n", totalIOSize);
+
+        assert(totalIOSize < 64000000);
 
         // Initialize vulkan:
         createInstance();
@@ -334,48 +237,56 @@ class ComputeApplication
 
         createDevice();
 
-
         // Create input and output buffers
         createBuffer();
         timeIval("Create buffers");
 
         createDescriptorSetLayout();
-        timeIval("Create descriptor set layout");
         createDescriptorSet();
 
         createComputePipeline();
 
         createCommandBuffer();
-
         timeIval("Create command buffer");
 
         createFence();
+        timeIval("Create fence");
+
+        initCommandBuffer(queueFamilyIndex, &copyCommandPool, &copyCommandBuffer);
+        timeIval("Create copy command buffer");
+        initFence(&copyFence);
+        timeIval("Create copy fence");
+
         mapMemory();
 
         timeIval("Map memory");
 
-        char *ioHeapBuf = (char *)mappedIOHeapMemory;
+        char *toGPUBuf = (char *)mappedToGPUMemory;
         ioRequests *ioReqs = (ioRequests *)mappedIOMemory;
-        char *heapBuf = (char *)mappedHeapMemory;
+        char *heapBuf = toGPUBuf;
         int32_t *i32HeapBuf = (int32_t *)heapBuf;
 
         // Copy argv to the IO heap.
         int32_t heapEnd = heapGlobalsOffset;
         int32_t i32HeapEnd = heapGlobalsOffset / 4;
-        int32_t i32_ptr = i32HeapEnd;
+        int32_t i32_ptr = 0;
         i32HeapBuf[i32_ptr++] = i32HeapEnd + 2;            // start index of the argv array
         i32HeapBuf[i32_ptr++] = i32HeapEnd + 2 + argc * 2; // end index of the argv array
-        int32_t heapPtr = heapEnd + 4 * (2 + argc * 2);
+        int32_t heap_ptr = 4 * (2 + argc * 2);
+        int32_t heapPtr = heapEnd + heap_ptr;
         for (int i = 0; i < argc; i++) {
             int32_t len = strlen(argv[i]);
             i32HeapBuf[i32_ptr++] = heapPtr;          // start index of argv[i] on the heap
             i32HeapBuf[i32_ptr++] = heapPtr + len;    // end index of argv[i]
-            memcpy(heapBuf + heapPtr, argv[i], len); // copy argv[i] to the heap
+            memcpy(heapBuf + heap_ptr, argv[i], len); // copy argv[i] to the heap
+            heap_ptr += len;
             heapPtr += len;
         }
-        __writeHeapToGPU(heapGlobalsOffset, heapPtr - heapGlobalsOffset);
-
-        timeIval("Write argv to GPU");
+        // Better do this in the main compute shader invocation.
+        // First bufferCopy takes a millisecond, subsequent calls 40us...
+        //writeToGPU(toGPUMemory, 0, heap_ptr);
+        //bufferCopy(heapBuffer, heapGlobalsOffset, toGPUBuffer, 0, heap_ptr);
+        timeIval("Write argv and globals to GPU");
 
         ioReqs->ioCount = 0;
         ioReqs->programReturnValue = 0;
@@ -385,7 +296,7 @@ class ComputeApplication
         std::thread ioThread;
 
         if (runIO) {
-            ioThread = std::thread(handleIORequests, this, verbose, ioReqs, ioHeapBuf, heapBuf, &ioRunning, &ioReset);
+            ioThread = std::thread(handleIORequests, this, verbose, ioReqs, (char*)mappedToGPUMemory, (char*)mappedFromGPUMemory, &ioRunning, &ioReset);
             timeIval("Start IO thread");
         }
 
@@ -418,23 +329,27 @@ class ComputeApplication
     }
 
     void timeIval(const char *name) {
-        std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
-        if (verbose || timings) fprintf(stderr, "[%7ld us] %s\n", std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count(), name);
-        begin = std::chrono::steady_clock::now();
+        if (verbose || timings) {
+            std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
+            fprintf(stderr, "[%7ld us] %s\n", std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count(), name);
+            begin = std::chrono::steady_clock::now();
+        }
     }
 
     void mapMemory()
     {
         vkMapMemory(device, heapMemory, 0, heapBufferSize, 0, &mappedHeapMemory);
         vkMapMemory(device, ioRequestsMemory, 0, ioRequestsBufferSize, 0, &mappedIOMemory);
-        vkMapMemory(device, ioHeapMemory, 0, ioHeapBufferSize, 0, &mappedIOHeapMemory);
+        vkMapMemory(device, toGPUMemory, 0, toGPUBufferSize, 0, &mappedToGPUMemory);
+        vkMapMemory(device, fromGPUMemory, 0, fromGPUBufferSize, 0, &mappedFromGPUMemory);
     }
 
     void unmapMemory()
     {
         vkUnmapMemory(device, heapMemory);
         vkUnmapMemory(device, ioRequestsMemory);
-        vkUnmapMemory(device, ioHeapMemory);
+        vkUnmapMemory(device, toGPUMemory);
+        vkUnmapMemory(device, fromGPUMemory);
     }
 
     void writeToGPU(VkDeviceMemory memory, VkDeviceSize offset, VkDeviceSize size)
@@ -451,7 +366,7 @@ class ComputeApplication
     void readFromGPU(VkDeviceMemory memory, VkDeviceSize offset, VkDeviceSize size)
     {
         VkMappedMemoryRange memoryRange = {
-            .sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
+             .sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
             .pNext = NULL,
             .memory = memory,
             .offset = offset,
@@ -459,16 +374,10 @@ class ComputeApplication
         vkInvalidateMappedMemoryRanges(device, 1, &memoryRange);
     }
 
-    void writeIOToGPU(VkDeviceSize offset, VkDeviceSize size) { writeToGPU(ioRequestsMemory, offset, size); }
-    void readIOFromGPU(VkDeviceSize offset, VkDeviceSize size) { readFromGPU(ioRequestsMemory, offset, size); }
-
-    void writeIOHeapToGPU(VkDeviceSize offset, VkDeviceSize size) { writeToGPU(ioHeapMemory, offset, size); }
-    // Reading the IO heap from the CPU is extremely slow. Like, 16 MB/s slow.
-    void __readIOHeapFromGPU(VkDeviceSize offset, VkDeviceSize size) { readFromGPU(ioHeapMemory, offset, size); }
-
-    // Heap writes should only be done before starting the shader. The GPU caches memory read from the buffer.
-    void __writeHeapToGPU(VkDeviceSize offset, VkDeviceSize size) { writeToGPU(heapMemory, offset, size); }
-    void readHeapFromGPU(VkDeviceSize offset, VkDeviceSize size) { readFromGPU(heapMemory, offset, size); }
+    void readFromGPUIO(VkDeviceSize offset, VkDeviceSize size)
+    {
+        readFromGPU(fromGPUMemory, offset, size);
+    }
 
     static VKAPI_ATTR VkBool32 VKAPI_CALL debugReportCallbackFn(
         VkDebugReportFlagsEXT flags,
@@ -624,27 +533,20 @@ class ComputeApplication
         uint32_t queueFamilyCount;
 
         vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queueFamilyCount, NULL);
-
-        // Retrieve all queue families.
         std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
+
         vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queueFamilyCount, queueFamilies.data());
 
-        // Now find a family that supports compute.
         uint32_t i = 0;
-        for (; i < queueFamilies.size(); ++i)
-        {
+        for (; i < queueFamilies.size(); ++i) {
             VkQueueFamilyProperties props = queueFamilies[i];
-
-            if (props.queueCount > 0 && (props.queueFlags & VK_QUEUE_COMPUTE_BIT))
-            {
-                // found a queue with compute. We're done!
+            if (props.queueCount > 0 && (props.queueFlags & VK_QUEUE_COMPUTE_BIT)) {
                 break;
             }
         }
 
-        if (i == queueFamilies.size())
-        {
-            throw std::runtime_error("could not find a queue family that supports operations");
+        if (i == queueFamilies.size()) {
+            throw std::runtime_error("Could not find a queue family that supports compute.");
         }
 
         return i;
@@ -652,32 +554,31 @@ class ComputeApplication
 
     void createDevice()
     {
-        queueFamilyIndex = getComputeQueueFamilyIndex(); // find queue family with compute capability.
-        float queuePriorities = 1.0;                     // we only have one queue, so this is not that imporant.
+        queueFamilyIndex = getComputeQueueFamilyIndex();
+        float queuePriorities = 1.0;
 
         VkDeviceQueueCreateInfo queueCreateInfo = {
             .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
             .queueFamilyIndex = queueFamilyIndex,
-            .queueCount = 1, // create one queue in this family. We don't need more.
+            .queueCount = 2, // One queue for compute, one for buffer copies.
             .pQueuePriorities = &queuePriorities};
 
         VkPhysicalDeviceFeatures deviceFeatures = {};
 
         VkDeviceCreateInfo deviceCreateInfo = {
             .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+            .queueCreateInfoCount = 1,
+            .pQueueCreateInfos = &queueCreateInfo,
             .enabledLayerCount = static_cast<uint32_t>(enabledLayers.size()),
             .ppEnabledLayerNames = enabledLayers.data(),
-            .pQueueCreateInfos = &queueCreateInfo,
-            .queueCreateInfoCount = 1,
             .pEnabledFeatures = &deviceFeatures,
-            .pNext = nullptr,
         };
 
-        VK_CHECK_RESULT(vkCreateDevice(physicalDevice, &deviceCreateInfo, NULL, &device)); // create logical device.
+        VK_CHECK_RESULT(vkCreateDevice(physicalDevice, &deviceCreateInfo, NULL, &device));
         timeIval("vkCreateDevice");
 
-        // Get a handle to the only member of the queue family.
         vkGetDeviceQueue(device, queueFamilyIndex, 0, &queue);
+        vkGetDeviceQueue(device, queueFamilyIndex, 1, &copyQueue);
         timeIval("vkGetDeviceQueue");
     }
 
@@ -731,9 +632,10 @@ class ComputeApplication
 
     void createBuffer()
     {
-        createAndAllocateBuffer(&heapBuffer, heapBufferSize, &heapMemory, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+        createAndAllocateBuffer(&heapBuffer, heapBufferSize, &heapMemory, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+        createAndAllocateBuffer(&fromGPUBuffer, fromGPUBufferSize, &fromGPUMemory, VK_MEMORY_PROPERTY_HOST_CACHED_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+        createAndAllocateBuffer(&toGPUBuffer, toGPUBufferSize, &toGPUMemory, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
         createAndAllocateBuffer(&ioRequestsBuffer, ioRequestsBufferSize, &ioRequestsMemory, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, 0);
-        createAndAllocateBuffer(&ioHeapBuffer, ioHeapBufferSize, &ioHeapMemory, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
     }
 
     void createDescriptorSetLayout()
@@ -751,23 +653,27 @@ class ComputeApplication
              .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
              .descriptorCount = 1,
              .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT},
+            {.binding = 3,
+             .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+             .descriptorCount = 1,
+             .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT},
         };
 
         VkDescriptorSetLayoutCreateInfo descriptorSetLayoutCreateInfo = {
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-            .bindingCount = 3,
+            .bindingCount = 4,
             .pBindings = descriptorSetLayoutBindings};
 
         // Create the descriptor set layout.
         VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device, &descriptorSetLayoutCreateInfo, NULL, &descriptorSetLayout));
-        //printf("createDescriptorSetLayout done\n");
+        timeIval("vkCreateDescriptorSetLayout");
     }
 
     void createDescriptorSet()
     {
         VkDescriptorPoolSize descriptorPoolSize = {
             .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-            .descriptorCount = 3};
+            .descriptorCount = 4};
 
         VkDescriptorPoolCreateInfo descriptorPoolCreateInfo = {
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
@@ -777,7 +683,6 @@ class ComputeApplication
 
         // create descriptor pool.
         VK_CHECK_RESULT(vkCreateDescriptorPool(device, &descriptorPoolCreateInfo, NULL, &descriptorPool));
-        //printf("vkCreateDescriptorPool done\n");
         timeIval("vkCreateDescriptorPool");
 
         /*
@@ -791,7 +696,6 @@ class ComputeApplication
 
         // allocate descriptor set.
         VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &descriptorSetAllocateInfo, &descriptorSet));
-        //printf("vkAllocateDescriptorSets done\n");
         timeIval("vkAllocateDescriptorSets");
 
         VkDescriptorBufferInfo heapDescriptorBufferInfo = {
@@ -804,10 +708,15 @@ class ComputeApplication
             .offset = 0,
             .range = ioRequestsBufferSize};
 
-        VkDescriptorBufferInfo ioHeapDescriptorBufferInfo = {
-            .buffer = ioHeapBuffer,
+        VkDescriptorBufferInfo toGPUDescriptorBufferInfo = {
+            .buffer = toGPUBuffer,
             .offset = 0,
-            .range = ioHeapBufferSize};
+            .range = toGPUBufferSize};
+
+        VkDescriptorBufferInfo fromGPUDescriptorBufferInfo = {
+            .buffer = fromGPUBuffer,
+            .offset = 0,
+            .range = fromGPUBufferSize};
 
         VkWriteDescriptorSet writeDescriptorSets[4] = {
             {
@@ -832,12 +741,19 @@ class ComputeApplication
                 .dstBinding = 2,
                 .descriptorCount = 1,
                 .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-                .pBufferInfo = &ioHeapDescriptorBufferInfo,
+                .pBufferInfo = &toGPUDescriptorBufferInfo,
+            },
+            {
+                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                .dstSet = descriptorSet,
+                .dstBinding = 3,
+                .descriptorCount = 1,
+                .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .pBufferInfo = &fromGPUDescriptorBufferInfo,
             },
         };
 
-        vkUpdateDescriptorSets(device, 3, writeDescriptorSets, 0, NULL);
-        //printf("vkUpdateDescriptorSets done\n");
+        vkUpdateDescriptorSets(device, 4, writeDescriptorSets, 0, NULL);
         timeIval("vkUpdateDescriptorSets");
     }
 
@@ -1019,103 +935,71 @@ class ComputeApplication
 
     }
 
-    void createCommandBuffer()
+    void initCommandBuffer(uint32_t queueFamilyIndex, VkCommandPool *commandPool, VkCommandBuffer *commandBuffer)
     {
-        /*
-        We are getting closer to the end. In order to send commands to the device(GPU),
-        we must first record commands into a command buffer.
-        To allocate a command buffer, we must first create a command pool. So let us do that.
-        */
-        VkCommandPoolCreateInfo commandPoolCreateInfo = {};
-        commandPoolCreateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-        commandPoolCreateInfo.flags = 0;
-        // the queue family of this command pool. All command buffers allocated from this command pool,
-        // must be submitted to queues of this family ONLY.
-        commandPoolCreateInfo.queueFamilyIndex = queueFamilyIndex;
-        VK_CHECK_RESULT(vkCreateCommandPool(device, &commandPoolCreateInfo, NULL, &commandPool));
+        VkCommandPoolCreateInfo commandPoolCreateInfo = {.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO, .flags = 0, .queueFamilyIndex = queueFamilyIndex};
+        VK_CHECK_RESULT(vkCreateCommandPool(device, &commandPoolCreateInfo, NULL, commandPool));
 
-        /*
-        Now allocate a command buffer from the command pool.
-        */
-        VkCommandBufferAllocateInfo commandBufferAllocateInfo = {};
-        commandBufferAllocateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-        commandBufferAllocateInfo.commandPool = commandPool; // specify the command pool to allocate from.
-        // if the command buffer is primary, it can be directly submitted to queues.
-        // A secondary buffer has to be called from some primary command buffer, and cannot be directly
-        // submitted to a queue. To keep things simple, we use a primary command buffer.
-        commandBufferAllocateInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-        commandBufferAllocateInfo.commandBufferCount = 1;                                              // allocate a single command buffer.
-        VK_CHECK_RESULT(vkAllocateCommandBuffers(device, &commandBufferAllocateInfo, &commandBuffer)); // allocate command buffer.
-
+        VkCommandBufferAllocateInfo commandBufferAllocateInfo = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+            .commandPool = *commandPool,
+            .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+            .commandBufferCount = 1, };
+        VK_CHECK_RESULT(vkAllocateCommandBuffers(device, &commandBufferAllocateInfo, commandBuffer));
     }
 
-    void createFence() {
-
-        /*
-          We create a fence.
-        */
-        VkFenceCreateInfo fenceCreateInfo = {};
-        fenceCreateInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-        fenceCreateInfo.flags = 0;
-        VK_CHECK_RESULT(vkCreateFence(device, &fenceCreateInfo, NULL, &fence));
-
-        /*
-        Now we shall finally submit the recorded command buffer to a queue.
-        */
-
+    void initFence(VkFence *fence) {
+        VkFenceCreateInfo fenceCreateInfo = {.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO, .flags = 0};
+        VK_CHECK_RESULT(vkCreateFence(device, &fenceCreateInfo, NULL, fence));
     }
 
+    void createCommandBuffer() { initCommandBuffer(queueFamilyIndex, &commandPool, &commandBuffer); }
+    void createFence() { initFence(&fence); }
     void startCommandBuffer()
     {
+        VkCommandBufferBeginInfo beginInfo = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, .flags = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT};
+        VK_CHECK_RESULT(vkBeginCommandBuffer(commandBuffer, &beginInfo));
 
-        //updateOutputDescriptorSet();
+            VkBufferCopy copyRegion{ .srcOffset = 0, .dstOffset = heapGlobalsOffset, .size = heapSize };
+            vkCmdCopyBuffer(commandBuffer, toGPUBuffer, heapBuffer, 1, &copyRegion);
 
-        /*
-        Now we shall start recording commands into the newly allocated command buffer.
-        */
-        VkCommandBufferBeginInfo beginInfo = {};
-        beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-        beginInfo.flags = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT;
-        VK_CHECK_RESULT(vkBeginCommandBuffer(commandBuffer, &beginInfo)); // start recording commands.
+            /*
+            We need to bind a pipeline, AND a descriptor set before we dispatch.
+            The validation layer will NOT give warnings if you forget these, so be very careful not to forget them.
+            */
+            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
+            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &descriptorSet, 0, NULL);
 
-        /*
-        We need to bind a pipeline, AND a descriptor set before we dispatch.
-
-        The validation layer will NOT give warnings if you forget these, so be very careful not to forget them.
-        */
-        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
-        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &descriptorSet, 0, NULL);
-
-        /*
-        Calling vkCmdDispatch basically starts the compute pipeline, and executes the compute shader.
-        The number of workgroups is specified in the arguments.
-        If you are already familiar with compute shaders from OpenGL, this should be nothing new to you.
-        */
-        vkCmdDispatch(commandBuffer, workSize[0], workSize[1], workSize[2]);
+            vkCmdDispatch(commandBuffer, workSize[0], workSize[1], workSize[2]);
 
         VK_CHECK_RESULT(vkEndCommandBuffer(commandBuffer)); // end recording commands.
 
-
-        VkSubmitInfo submitInfo = {
-            .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-            .commandBufferCount = 1,
-            .pCommandBuffers = &commandBuffer
-        };
+        VkSubmitInfo submitInfo = {.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO, .commandBufferCount = 1, .pCommandBuffers = &commandBuffer };
         VK_CHECK_RESULT(vkQueueSubmit(queue, 1, &submitInfo, fence));
     }
 
-    void waitCommandBuffer()
-    {
-        /*
-        The command will not have finished executing until the fence is signalled.
-        So we wait here.
-        We will directly after this read our buffer from the GPU,
-        and we will not be sure that the command has finished executing unless we wait for the fence.
-        Hence, we use a fence here.
-        */
-        VK_CHECK_RESULT(vkWaitForFences(device, 1, &fence, VK_TRUE, 1000000000000));
-        VK_CHECK_RESULT(vkResetFences(device, 1, &fence));
+    void waitForFence(VkFence *fence) {
+        VK_CHECK_RESULT(vkWaitForFences(device, 1, fence, VK_TRUE, 1000000000000));
+        VK_CHECK_RESULT(vkResetFences(device, 1, fence));
     }
+
+    void waitCommandBuffer() { waitForFence(&fence); }
+
+
+    void bufferCopy(VkBuffer dst, size_t dstOff, VkBuffer src, size_t srcOff, size_t byteCount) {
+        VkCommandBufferBeginInfo beginInfo = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, .flags = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT};
+        VK_CHECK_RESULT(vkBeginCommandBuffer(copyCommandBuffer, &beginInfo));
+
+            VkBufferCopy copyRegion{ .srcOffset = srcOff, .dstOffset = dstOff, .size = byteCount };
+            vkCmdCopyBuffer(copyCommandBuffer, src, dst, 1, &copyRegion);
+
+        VK_CHECK_RESULT(vkEndCommandBuffer(copyCommandBuffer));
+
+        VkSubmitInfo submitInfo = {.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO, .commandBufferCount = 1, .pCommandBuffers = &copyCommandBuffer };
+        VK_CHECK_RESULT(vkQueueSubmit(copyQueue, 1, &submitInfo, copyFence));
+
+        waitForFence(&copyFence);
+    }
+
 
     void cleanup()
     {
@@ -1138,11 +1022,13 @@ class ComputeApplication
         timeIval("vkDestroyFence");
         vkFreeMemory(device, heapMemory, NULL);
         vkFreeMemory(device, ioRequestsMemory, NULL);
-        vkFreeMemory(device, ioHeapMemory, NULL);
+        vkFreeMemory(device, toGPUMemory, NULL);
+        vkFreeMemory(device, fromGPUMemory, NULL);
         timeIval("vkFreeMemory");
         vkDestroyBuffer(device, heapBuffer, NULL);
         vkDestroyBuffer(device, ioRequestsBuffer, NULL);
-        vkDestroyBuffer(device, ioHeapBuffer, NULL);
+        vkDestroyBuffer(device, toGPUBuffer, NULL);
+        vkDestroyBuffer(device, fromGPUBuffer, NULL);
         timeIval("vkDestroyBuffer");
         vkDestroyShaderModule(device, computeShaderModule, NULL);
         timeIval("vkDestroyShaderModule");
@@ -1154,6 +1040,7 @@ class ComputeApplication
         vkDestroyPipeline(device, pipeline, NULL);
         timeIval("vkDestroyPipeline");
         vkDestroyCommandPool(device, commandPool, NULL);
+        vkDestroyCommandPool(device, copyCommandPool, NULL);
         timeIval("vkDestroyCommandPool");
         vkDestroyDevice(device, NULL);
         timeIval("vkDestroyDevice");
@@ -1170,8 +1057,8 @@ class ComputeApplication
         if (file != NULL) fclose(file);
     }
 
-    static void handleIORequest(ComputeApplication *app, bool verbose, ioRequests *ioReqs, char *toGPUBuf, char *fromGPUBuf, int i, volatile bool *completed, int threadIdx) {
-        while (ioReqs->requests[i].status != IO_START);
+    static void handleIORequest(ComputeApplication *app, bool verbose, ioRequests *ioReqs, char *toGPUBuf, char *fromGPUBuf, int i, volatile bool *completed, int threadIdx, std::map<int, FILE*> *fileCache) {
+        while (((volatile ioRequest*)(ioReqs->requests))[i].status != IO_START);
         ioRequest req = ioReqs->requests[i];
         if (verbose) fprintf(stderr, "IO req %d: t:%d s:%d off:%ld count:%ld fn_start:%d fn_end:%d res_start:%d res_end:%d\n", i, req.ioType, req.status, req.offset, req.count, req.filename_start, req.filename_end, req.result_start, req.result_end);
 
@@ -1179,12 +1066,21 @@ class ComputeApplication
         char *filename = NULL;
         FILE *file = NULL;
         if (req.filename_end == 0) {
-            file = stdout;
+            if (req.filename_start == 0) {
+                file = stdin;
+            } else if (req.filename_start == 1) {
+                file = stdout;
+            } else if (req.filename_start == 2) {
+                file = stderr;
+            } else {
+                std::lock_guard<std::mutex> guard(fileCache_mutex);
+                file = fileCache->at(req.filename_start);
+            }
         } else {
             VkDeviceSize filenameLength = req.filename_end - req.filename_start;
             if (verbose) printf("Filename length %lu\n", filenameLength);
             filename = (char*)calloc(filenameLength + 1, 1);
-            app->readHeapFromGPU(req.filename_start, filenameLength);
+            app->readFromGPUIO(req.filename_start, filenameLength);
             memcpy(filename, fromGPUBuf + req.filename_start, filenameLength);
             filename[filenameLength] = 0;
         }
@@ -1192,17 +1088,16 @@ class ComputeApplication
         // Process IO command
         if (req.ioType == IO_READ) {
             if (verbose) printf("Read %s\n", filename);
-            auto fd = openFile(filename, file, "r");
+            auto fd = openFile(filename, file, "rb");
             fseek(fd, req.offset, SEEK_SET);
             int32_t bytes = fread(toGPUBuf + req.result_start, 1, req.count, fd);
             if (file == NULL) closeFile(fd);
-            app->writeIOHeapToGPU(req.result_start, bytes);
-            req.result_end = req.result_start + bytes;
+            ioReqs->requests[i].result_end = req.result_start + bytes;
             req.status = IO_COMPLETE;
 
         } else if (req.ioType == IO_WRITE) {
-            auto fd = openFile(filename, file, "r+");
-            app->readHeapFromGPU(req.result_start, req.count);
+            auto fd = openFile(filename, file, "rb+");
+            app->readFromGPUIO(req.result_start, req.count);
             if (req.offset < 0) {
                 fseek(fd, -1-req.offset, SEEK_END);
             } else {
@@ -1210,15 +1105,15 @@ class ComputeApplication
             }
             int32_t bytes = fwrite(fromGPUBuf + req.result_start, 1, req.count, fd);
             if (file == NULL) closeFile(fd);
-            req.result_end = req.result_start + bytes;
+            ioReqs->requests[i].result_end = req.result_start + bytes;
             req.status = IO_COMPLETE;
 
         } else if (req.ioType == IO_CREATE) {
-            auto fd = openFile(filename, file, "w");
-            app->readHeapFromGPU(req.result_start, req.count);
+            auto fd = openFile(filename, file, "wb");
+            app->readFromGPUIO(req.result_start, req.count);
             int32_t bytes = fwrite(fromGPUBuf + req.result_start, 1, req.count, fd);
             if (file == NULL) closeFile(fd);
-            req.result_end = req.result_start + bytes;
+            ioReqs->requests[i].result_end = req.result_start + bytes;
             req.status = IO_COMPLETE;
 
         } else if (req.ioType == IO_DELETE) {
@@ -1229,29 +1124,118 @@ class ComputeApplication
             truncate(filename, req.count);
             req.status = IO_COMPLETE;
 
+        } else if (req.ioType == IO_NOP) {
+            req.status = IO_COMPLETE;
+
+        } else if (req.ioType == IO_PINGPONG) {
+            app->readFromGPUIO(req.result_start, req.count);
+            memcpy(toGPUBuf + req.result_start, fromGPUBuf + req.offset, req.count);
+            ioReqs->requests[i].result_end = req.result_start + req.count;
+            req.status = IO_COMPLETE;
+
         } else if (req.ioType == IO_RUN_CMD) {
             // Run command and copy the results to req.data
-            req.status = IO_ERROR;
+            int result = system(filename);
+            ioReqs->requests[i].result_start = result;
+            ioReqs->requests[i].result_end = 0;
+            req.status = IO_COMPLETE;
 
         } else if (req.ioType == IO_MOVE) {
             // Move file from filename to req.data
-            req.status = IO_ERROR;
+            char *dst = (char*)calloc(req.count+1, 1);
+            app->readFromGPUIO(req.result_start, req.count);
+            memcpy(dst, fromGPUBuf + req.result_start, req.count);
+            dst[req.count] = 0;
+            int result = rename(filename, dst);
+            ioReqs->requests[i].result_start = result;
+            ioReqs->requests[i].result_end = 0;
+            req.status = IO_COMPLETE;
 
         } else if (req.ioType == IO_COPY) {
             // Copy file from filename to req.data
-            req.status = IO_ERROR;
+            char *dst = (char*)calloc(req.count+1, 1);
+            app->readFromGPUIO(req.result_start, req.count);
+            memcpy(dst, fromGPUBuf + req.result_start, req.count);
+            dst[req.count] = 0;
+            std::error_code ec;
+            std::filesystem::copy(filename, dst, ec);
+            ioReqs->requests[i].result_start = ec.value();
+            ioReqs->requests[i].result_end = 0;
+            req.status = IO_COMPLETE;
 
         } else if (req.ioType == IO_COPY_RANGE) {
             // Copy range[req.data, req.data + 8] of data from filename to (req.data + 16)
             req.status = IO_ERROR;
 
+        } else if (req.ioType == IO_CD) {
+            // Make dir at filename
+            int result = chdir(filename);
+            ioReqs->requests[i].result_start = result;
+            ioReqs->requests[i].result_end = 0;
+            req.status = IO_COMPLETE;
+
         } else if (req.ioType == IO_MKDIR) {
             // Make dir at filename
-            req.status = IO_ERROR;
+            int result = mkdir(filename, 0755);
+            ioReqs->requests[i].result_start = result;
+            ioReqs->requests[i].result_end = 0;
+            req.status = IO_COMPLETE;
 
         } else if (req.ioType == IO_RMDIR) {
             // Remove dir at filename
-            req.status = IO_ERROR;
+            int result = rmdir(filename);
+            ioReqs->requests[i].result_start = result;
+            ioReqs->requests[i].result_end = 0;
+            req.status = IO_COMPLETE;
+
+        } else if (req.ioType == IO_GETCWD) {
+            char *s = getcwd(NULL, req.count);
+            int32_t len = strlen(s);
+            memcpy(toGPUBuf + req.result_start, s, len);
+            free(s);
+            ioReqs->requests[i].result_end = req.result_start + len;
+            req.status = IO_COMPLETE;
+
+        } else if (req.ioType == IO_OPEN) {
+            FILE* fd = fopen(filename, req.offset == 0 ? "rb" : (req.offset == 1 ? "rb+" : (req.offset == 2 ? "rw" : "ra")));
+            *(int32_t*)(toGPUBuf + req.result_start) = fileno(fd);
+            ioReqs->requests[i].result_end = req.result_start + 4;
+            std::lock_guard<std::mutex> guard(fileCache_mutex);
+            fileCache->emplace(fileno(fd), fd);
+            req.status = IO_COMPLETE;
+
+        } else if (req.ioType == IO_CLOSE) {
+            if (file) {
+                fclose(file);
+                std::lock_guard<std::mutex> guard(fileCache_mutex);
+                fileCache->erase(req.filename_start);
+            }
+            req.status = IO_COMPLETE;
+
+        } else if (req.ioType == IO_LS) {
+            // List files with filename
+            uint32_t count = 0, offset = 0, entryCount = 0;
+            for (const auto & entry : std::filesystem::directory_iterator(filename)) {
+                entryCount++;
+                if (count >= req.count) {
+                    continue;
+                }
+                if (offset >= req.offset) {
+                    auto path = entry.path();
+                    const char* s = path.c_str();
+                    int32_t len = strlen(s);
+                    if (count + 4 + len >= req.count) break;
+                    *(int32_t*)(toGPUBuf + req.result_start + count) = len;
+                    count += 4;
+                    memcpy(toGPUBuf + req.result_start + count, s, len);
+                    count += len;
+                }
+                offset++;
+            }
+            ioReqs->requests[i].offset = offset;
+            ioReqs->requests[i].count = entryCount;
+            ioReqs->requests[i].result_end = req.result_start + count;
+            req.status = IO_COMPLETE;
 
         } else if (req.ioType == IO_LISTEN) {
             // Start listening for connections on TCP/UDP/Unix socket
@@ -1283,8 +1267,6 @@ class ComputeApplication
             req.status = IO_ERROR;
 
         }
-        ioReqs->requests[i] = req;
-        assert(ioReqs->requests[i].result_end == req.result_end);
         ioReqs->requests[i].status = req.status;
         if (verbose) printf("IO completed: %d - status %d\n", i, ioReqs->requests[i].status);
 
@@ -1300,6 +1282,8 @@ class ComputeApplication
         std::thread threads[threadCount];
         int threadIdx = 0;
         volatile bool *completed = (volatile bool*)malloc(sizeof(bool) * threadCount);
+
+        std::map<int, FILE*> fileCache{};
 
         int32_t lastReqNum = 0;
         if (verbose) printf("IO Running\n");
@@ -1334,9 +1318,9 @@ class ComputeApplication
                     }
                     std::lock_guard<std::mutex> guard(completed_mutex);
                     completed[tidx] = false;
-                    threads[tidx] = std::thread(handleIORequest, app, verbose, ioReqs, toGPUBuf, fromGPUBuf, i, completed, tidx);
+                    threads[tidx] = std::thread(handleIORequest, app, verbose, ioReqs, toGPUBuf, fromGPUBuf, i, completed, tidx, &fileCache);
                 } else {
-                    handleIORequest(app, verbose, ioReqs, toGPUBuf, fromGPUBuf, i, completed, -1);
+                    handleIORequest(app, verbose, ioReqs, toGPUBuf, fromGPUBuf, i, completed, -1, &fileCache);
                 }
             }
             lastReqNum = reqNum;
