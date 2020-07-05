@@ -24,12 +24,23 @@ size_t arrLen(stringArray arr) {
 }
 
 string aGet(stringArray arr, size_t index) {
+    if (index >= arrLen(arr)) return string(0, 0);
     return string(indexHeap[arr.x + index * 2], indexHeap[arr.x + index * 2 + 1]);
 }
 
-void aSet(stringArray arr, size_t index, string value) {
+bool aSet(stringArray arr, size_t index, string value) {
+    if (index >= arrLen(arr)) return false;
     indexHeap[arr.x + index * 2] = value.x;
     indexHeap[arr.x + index * 2 + 1] = value.y;
+    return true;
+}
+
+string last(stringArray arr) {
+    return aGet(arr, arrLen(arr)-1);
+}
+
+string first(stringArray arr) {
+    return aGet(arr, 0);
 }
 
 char getC(string s, size_t index) {

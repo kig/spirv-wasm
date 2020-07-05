@@ -78,6 +78,21 @@ bool testLs() {
     return ok;
 }
 
+bool testGetCwd() {
+    string cwd = awaitIO(getCwd());
+    println(concat(str(ThreadID), " cwd is ", cwd));
+    bool ok = strLen(cwd) > 0;
+    if (ThreadID == 0) {
+        awaitIO(mkdir("test_cwd"));
+        awaitIO(chdir("test_cwd"));
+        string newCwd = awaitIO(getCwd());
+        println(concat("New cwd is ", newCwd));
+        ok = ok && !strEq(cwd, newCwd);
+        ok = ok && strEq("test_cwd", last(split(newCwd, '/')));
+    }
+    return ok;
+}
+
 void printTest(bool ok, string name) {
     if (!ok || ThreadID == 0) {
         println(concat(str(ThreadID), ": ", name, ok ? " successful" : " failed!"));
@@ -93,5 +108,6 @@ void main() {
     TEST(testWrite);
     TEST(testRunCmd);
     TEST(testLs);
+    TEST(testGetCwd);
 }
 

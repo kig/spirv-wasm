@@ -1,5 +1,5 @@
 #define HEAP_SIZE 4096
-#define FROM_CPU_SIZE 4096
+#define FROM_CPU_SIZE 10
 #define TO_CPU_SIZE 4096
 
 layout ( local_size_x = 200, local_size_y = 1, local_size_z = 1 ) in;

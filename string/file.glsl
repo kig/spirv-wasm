@@ -119,7 +119,7 @@ io requestIO(ioRequest request) {
     if (strLen(request.filename) > 0) {
         request.filename = copyHeapToCPU(request.filename, toCPUMalloc(strLen(request.filename)));
     }
-    if (request.count > 0 && (request.ioType == IO_READ || request.ioType == IO_LS)) {
+    if (request.count > 0 && (request.ioType == IO_READ || request.ioType == IO_LS || request.ioType == IO_GETCWD)) {
         request.data = fromCPUMalloc(size_t(request.count));
         request.data.y = -1;
     } else if (request.count > 0 && request.ioType == IO_WRITE) {
@@ -168,7 +168,7 @@ alloc_t awaitIO(io ioReq, inout int32_t status, bool noCopy) {
         )
         return res;
     }
-    if (noCopy || req.ioType != IO_READ) {
+    if (noCopy || !(req.ioType == IO_READ || req.ioType == IO_GETCWD)) {
         ioRequests[ioReq.index].status = IO_HANDLED;
         return req.data;
     }
@@ -239,6 +239,37 @@ io ls(string dirname, alloc_t data) {
 io ls(string dirname, alloc_t data, int32_t offset) {
     return requestIO(ioRequest(IO_LS, IO_START, offset, strLen(data), dirname, data,0,0,0,0,0,0));
 }
+
+io getCwd(string data) {
+    return requestIO(ioRequest(IO_GETCWD, IO_START, 0, strLen(data), string(0,0), data,0,0,0,0,0,0));
+}
+
+io getCwd() {
+    return requestIO(ioRequest(IO_GETCWD, IO_START, 0, 256, string(0,0), malloc(256),0,0,0,0,0,0));
+}
+
+io chdir(string dirname) {
+    return requestIO(ioRequest(IO_CD, IO_START, 0, 0, dirname, string(0,0),0,0,0,0,0,0));
+}
+
+io stat(string filename, alloc_t st) {
+    return requestIO(ioRequest(IO_STAT, IO_START, 0, 0, filename, st,0,0,0,0,0,0));
+}
+
+io stat(string filename) {
+    return requestIO(ioRequest(IO_STAT, IO_START, 0, 0, filename, string(0,0),0,0,0,0,0,0));
+}
+
+io open(string filename) {
+    return requestIO(ioRequest(IO_OPEN, IO_START, 0, 0, filename, string(0,0),0,0,0,0,0,0));
+}
+
+io close(int32_t fd) {
+    return requestIO(ioRequest(IO_CLOSE, IO_START, 0, 0, string(fd, 0), string(0,0),0,0,0,0,0,0));
+}
+
+
+
 
 alloc_t readSync(string filename, int64_t offset, size_t count, string buf) { return awaitIO(read(filename, offset, count, buf)); }
 alloc_t readSync(string filename, string buf) { return awaitIO(read(filename, buf)); }

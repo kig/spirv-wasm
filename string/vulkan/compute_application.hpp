@@ -1191,6 +1191,7 @@ class ComputeApplication
         } else if (req.ioType == IO_GETCWD) {
             char *s = getcwd(NULL, req.count);
             int32_t len = strlen(s);
+            printf("getcwd: %s\n", s);
             memcpy(toGPUBuf + req.result_start, s, len);
             free(s);
             ioReqs->requests[i].result_end = req.result_start + len;
@@ -1235,6 +1236,26 @@ class ComputeApplication
             ioReqs->requests[i].offset = offset;
             ioReqs->requests[i].count = entryCount;
             ioReqs->requests[i].result_end = req.result_start + count;
+            req.status = IO_COMPLETE;
+
+        } else if (req.ioType == IO_STAT) {
+            // Stat a path and return file info
+            struct stat s;
+            int ok;
+            if (req.offset == 1) {
+                ok = lstat(filename, &s);
+            } else {
+                ok = stat(filename, &s);
+            }
+            ioReqs->requests[i].offset = errno;
+            errno = 0;
+            if (ok == 0) ioReqs->requests[i].count = s.st_size;
+            if (ok == 0 && req.count >= sizeof(s)) {
+                memcpy(toGPUBuf + req.result_start, &s, sizeof(s));
+                ioReqs->requests[i].result_end = req.result_start + sizeof(s);
+            } else {
+                ioReqs->requests[i].result_end = 0;
+            }
             req.status = IO_COMPLETE;
 
         } else if (req.ioType == IO_LISTEN) {
