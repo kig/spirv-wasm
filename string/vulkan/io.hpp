@@ -40,6 +40,9 @@
 #define IO_POPEN 33
 #define IO_PCLOSE 34
 
+// Invoke other compute kernels (TBD how this works)
+#define IO_RUNSPV 35
+
 // IO system benchmarking functions
 // How fast can you handle IO requests?
 #define IO_NOP 250
@@ -48,17 +51,73 @@
 
 
 /*
-The design for GPU IO
+Design of GPU IO
+===
+
+Hardware
 ---
 
-Workgroups submit tasks in sync -> readv / writev approach is beneficial for sequential reads/writes. Readv/writev are internally single-threaded, so limited by memcpy to 6-8 GB/s.
+ - GPUs have around a hundred processors, each with a 32-wide SIMD unit.
+ - The SIMD unit can execute a 32 thread threadgroup and juggle between ten threadgroups for latency hiding.
+ - GPU cacheline is 128 bytes.
+ - CPU cacheline is 64 bytes.
+ - GPU memory bandwidth is 400 - 1000 GB/s.
+ - CPU memory bandwidth is around 50 GB/s.
+ - PCIe bandwidth 11-13 GB/s. On PCIe4, 20 GB/s.
+ - NVMe flash can do 2.5-10 GB/s on 4-16 channels. PCIe4 could boost to 5-20 GB/s.
+ - The CPU can do 30 GB/s memcpy with multiple threads, so it's possible to keep PCIe4 saturated even with x16 -> x16.
+ - GPUdirect access to other PCIe devices is only available on server GPUs. Other GPUs need a roundtrip via CPU. 
+ - CPU memory accesses require several threads of execution to hit full memory bandwidth (single thread can do ~15 GB/s)
+ - DRAM is good at random access at >cacheline chunks with ~3-4x the bandwidth of PCIe3 x16, ~2x PCIe4 x16.
+ - Flash SSDs are good at random access at >128kB chunks, perform best with sequential accesses, can deal with high amounts of parallel requests. Writes are converted to log format.
+ - Optane is good at random access at small sizes >4kB and low parallelism. The performance of random and sequential accesses is similar.
 
-Lots of parallelism.
+ * => Large reads to flash should be executed in sequence (could be done by prefetching the entire file to page cache and only serving requests once the prefetcher has passed them)
+ * => Small scattered reads should be dispatched in parallel (if IO rate < prefetch speed, just prefetch the whole file)
+ * => Writes can be dispatched in parallel with more freedom, especially without fsync. Sequential and/or large block size writes will perform better on flash.
+ * => Doing 128 small IO requests in parallel may perform better than 16 parallel requests.
+ * => IOs to page cache should be done in parallel and ASAP.
+ * => Caching data into GPU RAM is important for performance.
+ * => Programs that execute faster than the PCIe bus should be run on the CPU if the GPU doesn't have the data in cache.
+ * => Fujitsu A64FX-type designs with lots of CPU cores with wide vector units and high bandwidth memory are awesome. No data juggling, no execution environment weirdness.
+
+The IO queue works by using spinlocks on both the CPU and GPU sides.
+The fewer IO requests you make, the less time you spend spinning.
+Sending data between CPU and GPU works best in large chunks.
+
+To avoid issues with cacheline clashes, align messages on GPU cacheline size.
+IO request spinlocks that read across the PCIe bus should have small delays between checks to avoid hogging the PCIe bus.
+Workgroups (especially subgroups) should bundle their IOs into a single scatter/gather.
+
+When working with opened files, reads and writes should be done with pread/pwrite. Sharing a FILE* across threads isn't a great idea.
+The cost of opening and closing files with every IO is eclipsed by transfer speeds with large (1 MB) block sizes.
+
+The IO library should be designed for big instructions with minimal roundtrips.
+E.g. directory listings should send the entire file list with file stats, and there should be a recursive version to transfer entire hierarchies.
+Think more shell utilities than syscalls. Use CPU as IO processor that can do local data processing without involving the GPU.
+
+Workgroup concurrency can be used to run the same code on CPU and GPU in parallel. This extends to multi-GPU and multi-node quite naturally.
+The IO queue could be used to exchange data between running workgroups.
+
+Limited amount of memory that can be shared between CPU and GPU (I start seeing issues with > 64 MB allocations).
+Having a small IO heap for each thread or even threadgroup, while easy to parallelize, limits IO sizes severely.
+32 MB transfer buffer, 32k threads -> 1k max IO per thread, or 32k per 32-wide subgroup.
+Preferable to do 1+ MB IOs.
+Design with a concurrently running IO manager program that processes IO transfers?
+The CPU could also manage this by issuing copyBuffer calls to move data.
+
+Workgroups submit tasks in sync -> readv / writev approach is beneficial for sequential reads/writes.
+Readv/writev are internally single-threaded, so probably limited by memcpy to 6-8 GB/s.
+
 Ordering of writes across workgroups requires a way to sequence IOs (either reduce to order on the GPU or reassemble correct order on the CPU.)
+IOs could have sequence ids.
 
-Compression of data on the PCIe bus would help. 32 * zstd --format=lz4 --fast -T1 file -o /dev/null goes at 38 GB/s.
+Compression of data on the PCIe bus could help. 32 * zstd --format=lz4 --fast -T1 file -o /dev/null goes at 38 GB/s.
 
-Need benchmark suite
+Caching file data on the GPU is important for performance, 40x higher bandwidth than CPU page cache over PCIe.
+Without GPU-side caching, you'll likely get better perf on the CPU
+
+Benchmark suite
 ---
 
  - Different block sizes
