@@ -1,3 +1,5 @@
+// IO status codes
+
 #define IO_NONE 0
 #define IO_START 1
 #define IO_RECEIVED 2
@@ -7,47 +9,93 @@
 #define IO_HANDLED 255
 
 
+// IO calls
 
+// Read from a file at given offset.
 #define IO_READ 1
+// Write to a file at given offset.
 #define IO_WRITE 2
+// Create new file, optionally write initial data to it.
 #define IO_CREATE 3
+// Delete a file.
 #define IO_DELETE 4
+// Change the length of file.
 #define IO_TRUNCATE 5
 
-#define IO_LISTEN 6
-#define IO_ACCEPT 7
-#define IO_CLOSE 8
-#define IO_OPEN 9
-#define IO_FSYNC 10
-#define IO_SEND 11
-#define IO_RECV 12
-#define IO_TIMENOW 13
-#define IO_TIMEOUT 14
-#define IO_CD 15
-#define IO_LS 16
-#define IO_RMDIR 17
-#define IO_CONNECT 24
+// Get working directory.
 #define IO_GETCWD 25
+// Change working directory.
+#define IO_CD 15
+// List files in a directory. Should be extended to pass stat data.
+#define IO_LS 16
+// Delete a directory.
+#define IO_RMDIR 17
+
+// Stat a file - passes raw stat struct, needs GLSL lib changes
 #define IO_STAT 26
+
+// Move a file
 #define IO_MOVE 27
+// Copy a file
 #define IO_COPY 28
-#define IO_COPY_RANGE 29
+// Create a directory.
 #define IO_MKDIR 30
 
+// Do a system() call.
 #define IO_RUN_CMD 31
+
+// exit() the process.
 #define IO_EXIT 32
-
-#define IO_POPEN 33
-#define IO_PCLOSE 34
-
-// Invoke other compute kernels (TBD how this works)
-#define IO_RUNSPV 35
 
 // IO system benchmarking functions
 // How fast can you handle IO requests?
 #define IO_NOP 250
 // How fast can you send data to CPU and get it back?
 #define IO_PINGPONG 251
+
+
+
+// Listen for connections on a socket - NOT IMPLEMENTED
+#define IO_LISTEN 6
+// Accept a new connection from a listening socket - NOT IMPLEMENTED
+#define IO_ACCEPT 7
+// Close an open file - NOT IMPLEMENTED
+#define IO_CLOSE 8
+// Open a file and return the file id - NOT IMPLEMENTED
+#define IO_OPEN 9
+
+// fsync an open file - NOT IMPLEMENTED
+#define IO_FSYNC 10
+
+// Send data to a socket - NOT IMPLEMENTED
+#define IO_SEND 11
+// Received data from a socket - NOT IMPLEMENTED
+#define IO_RECV 12
+
+// Get current time. - NOT IMPLEMENTED
+#define IO_TIMENOW 13
+// Wait for a duration on the CPU side. - NOT IMPLEMENTED
+#define IO_TIMEOUT 14
+
+// Connect to a remote server - NOT IMPLEMENTED
+#define IO_CONNECT 24
+
+// Copy a range of bytes from one file to another - NOT IMPLEMENTED
+#define IO_COPY_RANGE 29
+
+// Open a pipe to a process - NOT IMPLEMENTED
+#define IO_POPEN 33
+// Close process pipe. - NOT IMPLEMENTED
+#define IO_PCLOSE 34
+
+// Invoke other compute kernels (TBD how this works) - NOT IMPLEMENTED
+#define IO_RUNSPV 35
+
+// Chrooting the IO process might be useful - NOT IMPLEMENTED
+#define IO_CHROOT 36
+
+// In case you want to stop talking to the kernel - NOT IMPLEMENTED
+#define IO_SECCOMP 37
 
 
 /*

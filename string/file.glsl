@@ -48,6 +48,7 @@ layout(std430, binding = 1) volatile buffer ioRequestsBuffer {
 
 layout(std430, binding = 2) volatile buffer fromCPUBuffer { char fromCPU[]; };
 layout(std430, binding = 2) volatile buffer u8fromCPUBuffer { uint8_t u8fromCPU[]; };
+layout(std430, binding = 2) volatile buffer i16fromCPUBuffer { int16_t i16fromCPU[]; }; // 2 bytes
 layout(std430, binding = 2) volatile buffer i32fromCPUBuffer { int32_t i32fromCPU[]; }; // 4 bytes
 layout(std430, binding = 2) volatile buffer i64fromCPUBuffer { int64_t i64fromCPU[]; }; // 8 bytes
 layout(std430, binding = 2) volatile buffer i64v2fromCPUBuffer { i64vec2 i64v2fromCPU[]; }; // 16 bytes

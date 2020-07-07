@@ -1154,10 +1154,12 @@ class ComputeApplication
 
                     int64_t readCount = req.count;
                     if (useBlocks) {
-                        bytes = 4;
 
                         int32_t blockOff = 0;
                         int32_t blockBytes = 0;
+
+                        int32_t blockCount = 128;
+                        bytes = 128 * 4;
 
                         while (true) {
                             char* const inpPtr = inpBuf[inpBufIndex];
@@ -1171,11 +1173,12 @@ class ComputeApplication
                             bytes += cmpBytes;
                             blockBytes += cmpBytes;
                             if ((totalRead & 8191) == 0) {
-                                *(int32_t*)(toGPUBuf + req.result_start + blockOff) = blockBytes;
+                                // Align compressed blocks on 8-byte boundary.
+                                bytes = (bytes+7)/8 * 8;
+                                *(uint32_t*)(toGPUBuf + req.result_start + blockOff) = blockBytes;
                                 //printf("%d\n", blockBytes);
                                 blockBytes = 0;
-                                blockOff = bytes;
-                                bytes += 4;
+                                blockOff += 4;
                                 *(int32_t*)(toGPUBuf + req.result_start + blockOff) = 0;
                                 LZ4_resetStream_fast(lz4Stream);
                             }

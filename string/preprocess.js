@@ -53,6 +53,7 @@ for (segment of segments) {
 console.log(`#version 450
 #extension GL_EXT_shader_explicit_arithmetic_types : require
 #extension GL_KHR_memory_scope_semantics : require
+#extension GL_KHR_shader_subgroup_basic : require
 
 `);
 console.log(output.join('').replace('%%GLOBALS%%', globals.join('\n')).replace('%%INIT%%', init.join('\n')));
