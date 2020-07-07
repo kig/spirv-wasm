@@ -45,9 +45,13 @@ bool grepBuffer(int32_t blockSize, string buf, string pattern, char p, int32_t o
     return found;
 }
 
+
+#define LZ4_GROUP_SIZE 4
+#define LZ4_STREAM_BLOCK_SIZE 8192
+
 void lz4DecompressFromCPUToHeap(int32_t blockIndex, int32_t blockSize, string cmp, string dst) {
     if (blockIndex >= 128) return;
-    heapPtr = dst.y;
+
     ptr_t i = cmp.x + 128 * 4;
     int32_t len = 0;
     for (int32_t b=0; b<=blockIndex && b<128; b++) {
@@ -59,7 +63,7 @@ void lz4DecompressFromCPUToHeap(int32_t blockIndex, int32_t blockSize, string cm
         return;
     }
     ptr_t outputStart = dst.x + blockSize * blockIndex;
-    int32_t subId = (ThreadLocalID & 7);
+    int32_t subId = (ThreadLocalID % LZ4_GROUP_SIZE);
     
     for (ptr_t be=min(cmp.y, i+len), j=outputStart, dbe=min(dst.y, outputStart+blockSize); i<be && j<dbe;) {
         uint8_t token = u8fromCPU[i++];
@@ -72,16 +76,13 @@ void lz4DecompressFromCPUToHeap(int32_t blockIndex, int32_t blockSize, string cm
         }
         {
             int32_t k = 0;
-            for (; k < litLen-7; k+=8) heap[k+j+subId] = fromCPU[k+i+subId];
-            if (k < litLen && subId < litLen-k) heap[k+j+subId] = fromCPU[k+i+subId];
+            for (; k < litLen-(LZ4_GROUP_SIZE-1); k+=LZ4_GROUP_SIZE) u8heap[k+j+subId] = u8fromCPU[k+i+subId];
+            if (k < litLen && subId < litLen-k) u8heap[k+j+subId] = u8fromCPU[k+i+subId];
             i += litLen;
             j += litLen;
         }
-        //FREE(println(str(ivec4(token, litLen, j, i))));
 
         if (((j-outputStart) & 8191) == 0 && matchLen == 0) { // End of LZ4 block
-            //FREE(println( concat(str('-'), str('-'), str('\n')) ));
-            //FREE(println(string(j-litLen-matchLen, j)));
             continue;
         }
 
@@ -89,7 +90,6 @@ void lz4DecompressFromCPUToHeap(int32_t blockIndex, int32_t blockSize, string cm
                          | (int32_t(u8fromCPU[i+1]) << 8);
         i += 2;
         c = uint8_t(matchLen | (matchLen << 4));
-        //FREE(println(str(int32_t(c))));
         matchLen += 4;
         while (c == 0xff) {
             c = u8fromCPU[i++];
@@ -98,20 +98,14 @@ void lz4DecompressFromCPUToHeap(int32_t blockIndex, int32_t blockSize, string cm
         ptr_t m = j - matchOff;
         {
             int32_t k = 0;
-            int32_t maxSubSize = min(8, matchOff);
+            int32_t maxSubSize = min(LZ4_GROUP_SIZE, matchOff);
             if (subId < maxSubSize) {
-                for (; k < matchLen-(maxSubSize-1); k+=maxSubSize) heap[k+j+subId] = heap[k+m+subId];
-                if (k < matchLen && subId < matchLen-k) heap[k+j+subId] = heap[k+m+subId];
+                for (; k < matchLen-(maxSubSize-1); k+=maxSubSize) u8heap[k+j+subId] = u8heap[k+m+subId];
+                if (k < matchLen && subId < matchLen-k) u8heap[k+j+subId] = u8heap[k+m+subId];
             }
             j += matchLen;
         }
-        //for (int32_t k = 0; k < matchLen; k++, j++, m++) {
-        //    heap[j] = heap[m];
-        //}
-        //FREE(println(str( ivec4(matchOff, matchLen, j, dbe) )));
-        //FREE(println(string(j-litLen-matchLen, j)));
     }
-    //println(string(dst.x+blockIndex*blockSize, min(dst.y, dst.x+blockIndex*blockSize+blockSize)));
 }
 
 
@@ -162,8 +156,8 @@ void main() {
 
             if (done == 2) break;
 
-            for (int i = 0; i < 128; i += ThreadLocalCount/8) {
-                lz4DecompressFromCPUToHeap(i + ThreadLocalID/8, 8192, wgBuf, string(tgHeapStart, tgHeapStart + decompressedSize));
+            for (int32_t i = 0; i < 128; i += ThreadLocalCount/LZ4_GROUP_SIZE) {
+                lz4DecompressFromCPUToHeap(i + ThreadLocalID/LZ4_GROUP_SIZE, LZ4_STREAM_BLOCK_SIZE, wgBuf, string(tgHeapStart, tgHeapStart + decompressedSize));
             }
 
             if (ThreadLocalID == 0) {

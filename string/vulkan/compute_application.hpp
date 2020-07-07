@@ -1161,6 +1161,10 @@ class ComputeApplication
                         int32_t blockCount = 128;
                         bytes = 128 * 4;
 
+                        for (int i = 0; i < blockCount; i++) {
+                            *(int32_t*)(toGPUBuf + req.result_start + i*4) = 0;
+                        }
+
                         while (true) {
                             char* const inpPtr = inpBuf[inpBufIndex];
                             const int64_t inpBytes = (int) fread(inpPtr, 1, std::min(BLOCK_BYTES, (readCount - totalRead)), fd);
@@ -1168,7 +1172,7 @@ class ComputeApplication
                             if (0 == inpBytes) break;
                             const int64_t cmpBytes = LZ4_compress_fast_continue(lz4Stream, inpPtr, cmpBuf, inpBytes, sizeof(cmpBuf), 9);
                             if (cmpBytes <= 0) break;
-                            //printf("Write offset %d len %ld: first word %d %d %d %d\n", bytes, cmpBytes, cmpBuf[0], cmpBuf[1], cmpBuf[2], cmpBuf[3]);
+                            if (verbose) printf("Write offset %d len %ld: first word %d %d %d %d\n", bytes, cmpBytes, cmpBuf[0], cmpBuf[1], cmpBuf[2], cmpBuf[3]);
                             memcpy(toGPUBuf + req.result_start + bytes, cmpBuf, cmpBytes);
                             bytes += cmpBytes;
                             blockBytes += cmpBytes;
@@ -1176,7 +1180,7 @@ class ComputeApplication
                                 // Align compressed blocks on 8-byte boundary.
                                 bytes = (bytes+7)/8 * 8;
                                 *(uint32_t*)(toGPUBuf + req.result_start + blockOff) = blockBytes;
-                                //printf("%d\n", blockBytes);
+                                if (verbose) printf("%d\n", blockBytes);
                                 blockBytes = 0;
                                 blockOff += 4;
                                 *(int32_t*)(toGPUBuf + req.result_start + blockOff) = 0;
@@ -1185,7 +1189,7 @@ class ComputeApplication
                             inpBufIndex = (inpBufIndex + 1) % 2;
                         }
                         *(int32_t*)(toGPUBuf + req.result_start + blockOff) = blockBytes;
-                        // if (blockBytes > 0) printf("[%d] = %d\n", req.result_start + blockOff, blockBytes);
+                        if (verbose && blockBytes > 0) printf("[%d] = %d\n", req.result_start + blockOff, blockBytes);
                     } else {
                         while (true) {
                             char* const inpPtr = inpBuf[inpBufIndex];
