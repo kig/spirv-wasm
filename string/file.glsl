@@ -47,7 +47,13 @@ layout(std430, binding = 1) volatile buffer ioRequestsBuffer {
 };
 
 layout(std430, binding = 2) volatile buffer fromCPUBuffer { char fromCPU[]; };
-layout(std430, binding = 2) volatile buffer i64v4fromCPUBuffer { i64vec4 i64v4fromCPU[]; };
+layout(std430, binding = 2) volatile buffer u8fromCPUBuffer { uint8_t u8fromCPU[]; };
+layout(std430, binding = 2) volatile buffer i32fromCPUBuffer { int32_t i32fromCPU[]; }; // 4 bytes
+layout(std430, binding = 2) volatile buffer i64fromCPUBuffer { int64_t i64fromCPU[]; }; // 8 bytes
+layout(std430, binding = 2) volatile buffer i64v2fromCPUBuffer { i64vec2 i64v2fromCPU[]; }; // 16 bytes
+layout(std430, binding = 2) volatile buffer i64v4fromCPUBuffer { i64vec4 i64v4fromCPU[]; }; // 32 bytes
+layout(std430, binding = 2) volatile buffer f64m42fromCPUBuffer { f64mat4x2 f64m42fromCPU[]; }; // 64 bytes
+layout(std430, binding = 2) volatile buffer f64m4fromCPUBuffer { f64mat4 f64m4fromCPU[]; }; // 128 bytes
 layout(std430, binding = 3) buffer toCPUBuffer { char toCPU[]; };
 layout(std430, binding = 3) buffer i64v4toCPUBuffer { i64vec4 i64v4toCPU[]; };
 
@@ -56,8 +62,6 @@ layout(std430, binding = 3) buffer i64v4toCPUBuffer { i64vec4 i64v4toCPU[]; };
 const string stdin = string(0, 0);
 const string stdout = string(1, 0);
 const string stderr = string(2, 0);
-
-int32_t maxIOCountMinusOne = maxIOCount - 1;
 
 int32_t errno = 0;
 
@@ -97,6 +101,8 @@ void setReturnValue(int32_t i) {
     programReturnValue = i;
 }
 
+int32_t maxIOCount_cached = maxIOCount;
+
 #define COPYFUNC(NAME, SRC, DST) alloc_t NAME(alloc_t src, alloc_t dst) {\
     ptr_t s=src.x, d=dst.x;\
     if ((d & 31) == 0 && (s & 31) == 0) {\
@@ -116,25 +122,29 @@ COPYFUNC(copyFromCPUToHeap, fromCPU, heap)
 
 io requestIO(ioRequest request) {
     io token = io(0, request.data.x);
+    memoryBarrier();
+    // memoryBarrier(gl_ScopeDevice, gl_StorageSemanticsBuffer, gl_SemanticsAcquire);
     if (strLen(request.filename) > 0) {
         request.filename = copyHeapToCPU(request.filename, toCPUMalloc(strLen(request.filename)));
     }
     if (request.count > 0 && (request.ioType == IO_READ || request.ioType == IO_LS || request.ioType == IO_GETCWD)) {
-        request.data = fromCPUMalloc(size_t(request.count));
+        request.data = fromCPUMalloc(size_t(strLen(request.data)));
         request.data.y = -1;
     } else if (request.count > 0 && request.ioType == IO_WRITE) {
         request.data = copyHeapToCPU(request.data, toCPUMalloc(size_t(request.count)));
         request.data.y = -1;
     }
-    memoryBarrier(); //memoryBarrier(gl_ScopeDevice, gl_StorageSemanticsBuffer, gl_SemanticsAcquire);
+    memoryBarrier();
+    // memoryBarrier(gl_ScopeDevice, gl_StorageSemanticsBuffer, gl_SemanticsAcquire);
+
     // Replace this with a proper ring buffer that doesn't have issues with wrapping ioCounts.
-    int32_t reqNum = atomicAdd(ioCount, 1) & maxIOCountMinusOne;
+    int32_t reqNum = atomicAdd(ioCount, 1) % maxIOCount_cached;
     ioRequests[reqNum] = request;
     token.index = reqNum;
     return token;
 }
 
-alloc_t awaitIO(io ioReq, inout int32_t status, bool noCopy) {
+alloc_t awaitIO(io ioReq, inout int32_t status, bool noCopy, out size_t ioCount) {
     if (ioRequests[ioReq.index].status != IO_NONE) {
         while (
             ioRequests[ioReq.index].status < IO_COMPLETE ||
@@ -169,9 +179,20 @@ alloc_t awaitIO(io ioReq, inout int32_t status, bool noCopy) {
         return res;
     }
     if (noCopy || !(req.ioType == IO_READ || req.ioType == IO_GETCWD)) {
+        ioCount = size_t(req.count);
         ioRequests[ioReq.index].status = IO_HANDLED;
         return req.data;
     }
+    /*
+    if (req.ioType == IO_READ) {
+        // decompress LZ4
+        ioCount = size_t(req.count);
+        alloc_t s = alloc_t(ioReq.heapBufStart, ioReq.heapBufStart + ioCount);
+        lz4DecompressFromCPUToHeap(req.data, s);
+        ioRequests[ioReq.index].status = IO_HANDLED;
+        return s;
+    }
+    */
 
     alloc_t s = alloc_t(ioReq.heapBufStart, ioReq.heapBufStart + strLen(req.data));
     copyFromCPUToHeap(req.data, s);
@@ -181,15 +202,22 @@ alloc_t awaitIO(io ioReq, inout int32_t status, bool noCopy) {
 }
 
 alloc_t awaitIO(io request, inout int32_t status) {
-    return awaitIO(request, status, false);
+    size_t count;
+    return awaitIO(request, status, false, count);
 }
 
 alloc_t awaitIO(io request) {
-    return awaitIO(request, errno);
+    size_t count;
+    return awaitIO(request, errno, false, count);
 }
 
 alloc_t awaitIO(io request, bool noCopy) {
-    return awaitIO(request, errno, noCopy);
+    size_t count;
+    return awaitIO(request, errno, noCopy, count);
+}
+
+alloc_t awaitIO(io request, bool noCopy, out size_t count) {
+    return awaitIO(request, errno, noCopy, count);
 }
 
 io read(string filename, int64_t offset, size_t count, string buf) {

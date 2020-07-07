@@ -16,6 +16,8 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <zstd.h>
+#include <lz4.h>
 
 #include "io.hpp"
 
@@ -84,7 +86,7 @@ struct ioRequest {
 }; // 64 bytes
 
 #ifndef IO_REQUEST_COUNT
-#define IO_REQUEST_COUNT 262144
+#define IO_REQUEST_COUNT 65535
 #endif
 
 struct ioRequests {
@@ -174,7 +176,6 @@ class ComputeApplication
     uint32_t toGPUSize = 4096;
     uint32_t ioSize = sizeof(ioRequests);
 
-    uint32_t workSize[3] = {1, 1, 1};
     uint32_t localSize[3] = {1, 1, 1};
 
     const char *programFileName;
@@ -187,9 +188,6 @@ class ComputeApplication
 
     std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
 
-    bool verbose = false;
-    bool timings = false;
-
     uint32_t *code = NULL;
     uint32_t filelength;
 
@@ -197,7 +195,11 @@ class ComputeApplication
 
   public:
 
+    bool verbose = false;
+    bool timings = false;
+
     int exitCode = 0;
+    uint32_t workSize[3] = {1, 1, 1};
 
     void run(const char *fileName, int argc, char* argv[])
     {
@@ -1058,7 +1060,9 @@ class ComputeApplication
     }
 
     static void handleIORequest(ComputeApplication *app, bool verbose, ioRequests *ioReqs, char *toGPUBuf, char *fromGPUBuf, int i, volatile bool *completed, int threadIdx, std::map<int, FILE*> *fileCache) {
-        while (((volatile ioRequest*)(ioReqs->requests))[i].status != IO_START);
+        while (((volatile ioRequest*)(ioReqs->requests))[i].status != IO_START) {
+            std::this_thread::sleep_for(std::chrono::microseconds(10));
+        }
         ioRequest req = ioReqs->requests[i];
         if (verbose) fprintf(stderr, "IO req %d: t:%d s:%d off:%ld count:%ld fn_start:%d fn_end:%d res_start:%d res_end:%d\n", i, req.ioType, req.status, req.offset, req.count, req.filename_start, req.filename_end, req.result_start, req.result_end);
 
@@ -1090,8 +1094,117 @@ class ComputeApplication
             if (verbose) printf("Read %s\n", filename);
             auto fd = openFile(filename, file, "rb");
             fseek(fd, req.offset, SEEK_SET);
-            int32_t bytes = fread(toGPUBuf + req.result_start, 1, req.count, fd);
+
+            int32_t bytes = 0;
+            int64_t totalRead = 0;
+
+            bool compressedRead = true;
+            bool useZstd = false;
+            bool useBlocks = true;
+
+            if (compressedRead) {
+
+                if (useZstd) {
+                    size_t const buffInSize = ZSTD_CStreamInSize();
+                    void*  const buffIn  = malloc(buffInSize);
+                    size_t const buffOutSize = ZSTD_CStreamOutSize();
+                    void*  const buffOut = malloc(buffOutSize);
+
+                    ZSTD_CCtx* const cctx = ZSTD_createCCtx();
+                    ZSTD_CCtx_setParameter(cctx, ZSTD_c_compressionLevel, -9);
+                    ZSTD_CCtx_setParameter(cctx, ZSTD_c_strategy, ZSTD_fast);
+
+                    size_t readCount = req.count;
+                    size_t toRead = readCount < buffInSize ? readCount : buffInSize;
+                    for (;;) {
+                        size_t read = fread(buffIn, 1, readCount < toRead ? readCount : toRead, fd);
+                        readCount -= read;
+                        totalRead += read;
+                        bool lastChunk = (read < toRead || readCount == 0);
+                        ZSTD_EndDirective const mode = lastChunk ? ZSTD_e_end : ZSTD_e_continue;
+                        ZSTD_inBuffer input = { buffIn, read, 0 };
+                        bool finished = false;
+                        do {
+                            ZSTD_outBuffer output = { buffOut, buffOutSize, 0 };
+                            size_t const remaining = ZSTD_compressStream2(cctx, &output, &input, mode);
+                            memcpy(toGPUBuf + req.result_start + bytes, buffOut, output.pos);
+                            bytes += output.pos;
+                            finished = lastChunk ? (remaining == 0) : (input.pos == input.size);
+                        } while (!finished);
+                        if (lastChunk) break;
+                    }
+                    //printf("Wrote %ld => %d bytes\n", req.count, bytes);
+
+                    ZSTD_freeCCtx(cctx);
+                    free(buffIn);
+                    free(buffOut);
+                } else {
+                    // Use LZ4
+
+                    LZ4_stream_t lz4Stream_body;
+                    LZ4_stream_t* lz4Stream = &lz4Stream_body;
+
+                    const int64_t BLOCK_BYTES = 8192;
+
+                    char inpBuf[2][BLOCK_BYTES];
+                    char cmpBuf[LZ4_COMPRESSBOUND(BLOCK_BYTES)];
+                    int64_t  inpBufIndex = 0;
+
+                    LZ4_initStream(lz4Stream, sizeof (*lz4Stream));
+
+                    int64_t readCount = req.count;
+                    if (useBlocks) {
+                        bytes = 4;
+
+                        int32_t blockOff = 0;
+                        int32_t blockBytes = 0;
+
+                        while (true) {
+                            char* const inpPtr = inpBuf[inpBufIndex];
+                            const int64_t inpBytes = (int) fread(inpPtr, 1, std::min(BLOCK_BYTES, (readCount - totalRead)), fd);
+                            totalRead += inpBytes;
+                            if (0 == inpBytes) break;
+                            const int64_t cmpBytes = LZ4_compress_fast_continue(lz4Stream, inpPtr, cmpBuf, inpBytes, sizeof(cmpBuf), 9);
+                            if (cmpBytes <= 0) break;
+                            //printf("Write offset %d len %ld: first word %d %d %d %d\n", bytes, cmpBytes, cmpBuf[0], cmpBuf[1], cmpBuf[2], cmpBuf[3]);
+                            memcpy(toGPUBuf + req.result_start + bytes, cmpBuf, cmpBytes);
+                            bytes += cmpBytes;
+                            blockBytes += cmpBytes;
+                            if ((totalRead & 8191) == 0) {
+                                *(int32_t*)(toGPUBuf + req.result_start + blockOff) = blockBytes;
+                                //printf("%d\n", blockBytes);
+                                blockBytes = 0;
+                                blockOff = bytes;
+                                bytes += 4;
+                                *(int32_t*)(toGPUBuf + req.result_start + blockOff) = 0;
+                                LZ4_resetStream_fast(lz4Stream);
+                            }
+                            inpBufIndex = (inpBufIndex + 1) % 2;
+                        }
+                        *(int32_t*)(toGPUBuf + req.result_start + blockOff) = blockBytes;
+                        // if (blockBytes > 0) printf("[%d] = %d\n", req.result_start + blockOff, blockBytes);
+                    } else {
+                        while (true) {
+                            char* const inpPtr = inpBuf[inpBufIndex];
+                            const int inpBytes = (int) fread(inpPtr, 1, std::min(BLOCK_BYTES, (readCount - totalRead)), fd);
+                            totalRead += inpBytes;
+                            if (0 == inpBytes) break;
+                            const int cmpBytes = LZ4_compress_fast_continue(lz4Stream, inpPtr, cmpBuf, inpBytes, sizeof(cmpBuf), 9);
+                            if (cmpBytes <= 0) break;
+                            memcpy(toGPUBuf + req.result_start + bytes, cmpBuf, cmpBytes);
+                            bytes += cmpBytes;
+                            inpBufIndex = (inpBufIndex + 1) % 2;
+                        }
+                    }
+                    if (verbose && totalRead > 0) printf("Compression ratio: %.4f\n", (float)bytes/totalRead);
+                }
+
+            } else {
+                bytes = fread(toGPUBuf + req.result_start, 1, req.count, fd);
+                totalRead = bytes;
+            }
             if (file == NULL) closeFile(fd);
+            ioReqs->requests[i].count = totalRead;
             ioReqs->requests[i].result_end = req.result_start + bytes;
             req.status = IO_COMPLETE;
 
@@ -1316,7 +1429,37 @@ class ComputeApplication
                 ioReqs->ioCount = 0;
                 *ioReset = false;
             }
-            int32_t reqNum = ioReqs->ioCount;
+            int32_t reqNum = ioReqs->ioCount % IO_REQUEST_COUNT;
+            if (reqNum < lastReqNum) {
+                for (int32_t i = lastReqNum; i < IO_REQUEST_COUNT; i++) {
+                    if (verbose) printf("Got IO request %d\n", i);
+                    if (ioReqs->requests[i].ioType == IO_READ) {
+                        int tidx = threadIdx;
+                        if (tidx == threadCount) {
+                            // Find completed thread.
+                            for (int j = 0; j < threadCount; j++) {
+                                if (completed[j]) {
+                                    tidx = j;
+                                    threads[j].join();
+                                    break;
+                                }
+                            }
+                            if (tidx == threadCount) {
+                                threads[0].join();
+                                tidx = 0;
+                            }
+                        } else {
+                            tidx = threadIdx++;
+                        }
+                        std::lock_guard<std::mutex> guard(completed_mutex);
+                        completed[tidx] = false;
+                        threads[tidx] = std::thread(handleIORequest, app, verbose, ioReqs, toGPUBuf, fromGPUBuf, i, completed, tidx, &fileCache);
+                    } else {
+                        handleIORequest(app, verbose, ioReqs, toGPUBuf, fromGPUBuf, i, completed, -1, &fileCache);
+                    }
+                }
+                lastReqNum = 0;
+            }
             for (int32_t i = lastReqNum; i < reqNum; i++) {
                 if (verbose) printf("Got IO request %d\n", i);
                 if (ioReqs->requests[i].ioType == IO_READ) {
@@ -1343,8 +1486,10 @@ class ComputeApplication
                 } else {
                     handleIORequest(app, verbose, ioReqs, toGPUBuf, fromGPUBuf, i, completed, -1, &fileCache);
                 }
+
             }
             lastReqNum = reqNum;
+            std::this_thread::sleep_for(std::chrono::microseconds(10));
         }
         while (threadIdx > 0) threads[--threadIdx].join();
         for (int i=0; i < threadCount; i++) completed[i] = false;

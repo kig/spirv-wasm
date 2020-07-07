@@ -1,10 +1,10 @@
-layout ( local_size_x = 256, local_size_y = 1, local_size_z = 1 ) in;
-
+layout ( local_size_x = 222, local_size_y = 1, local_size_z = 1 ) in;
 #include "file.glsl"
 
 shared int done;
 shared int64_t wgOff;
 shared string wgBuf;
+shared int32_t decompressedSize;
 shared ptr_t groupHeapPtr;
 
 bool startsWithIO(string s, string pattern) {
@@ -31,19 +31,97 @@ bool grepBuffer(int32_t blockSize, string buf, string pattern, char p, int32_t o
     */
     for (size_t i = 0, l = strLen(buf); i < blockSize; i+=32) {
         ptr_t idx = buf.x + i;
-        i64vec4 v = i64v4fromCPU[idx / 32];
+        i64vec4 v = i64v4heap[idx / 32];
         for (size_t j = 0, k = i, jdx = idx; j < 64; j += 8, idx++, k++, jdx++) {
             i8vec4 u = i8vec4((v >> j) & 0xff);
             if (any(equal(u, i8vec4(p)))) {
-                if (k < l && p == u.x && startsWithIO(string(jdx, buf.y), pattern)) addHit(k, off, found);
-                if (k+8 < l && p == u.y && startsWithIO(string(jdx+8, buf.y), pattern)) addHit(k + 8, off, found);
-                if (k+16 < l && p == u.z && startsWithIO(string(jdx+16, buf.y), pattern)) addHit(k + 16, off, found);
-                if (k+24 < l && p == u.w && startsWithIO(string(jdx+24, buf.y), pattern)) addHit(k + 24, off, found);
+                if (k < l && p == u.x && startsWith(string(jdx, buf.y), pattern)) addHit(k, off, found);
+                if (k+8 < l && p == u.y && startsWith(string(jdx+8, buf.y), pattern)) addHit(k + 8, off, found);
+                if (k+16 < l && p == u.z && startsWith(string(jdx+16, buf.y), pattern)) addHit(k + 16, off, found);
+                if (k+24 < l && p == u.w && startsWith(string(jdx+24, buf.y), pattern)) addHit(k + 24, off, found);
             }
         }
     }
     return found;
 }
+
+void lz4DecompressFromCPUToHeap(int32_t blockIndex, int32_t blockSize, string cmp, string dst) {
+    heapPtr = dst.y;
+    ptr_t i = cmp.x;
+    int32_t len = 0;
+    for (int32_t b=0; b<=blockIndex && i<cmp.y; b++) {
+        len = (int32_t(u8fromCPU[i  ]) << 0)
+            | (int32_t(u8fromCPU[i+1]) << 8)
+            | (int32_t(u8fromCPU[i+2]) << 16)
+            | (int32_t(u8fromCPU[i+3]) << 24)
+            ;
+        i += 4;
+        if (b == blockIndex || len <= 0) break;
+        i += len;
+    }
+    barrier(); memoryBarrier();
+    if (len <= 0 || i >= cmp.y) {
+        return;
+    }
+    ptr_t outputStart = dst.x + blockSize * blockIndex;
+    for (ptr_t be=min(cmp.y, i+len), j=outputStart, dbe=min(dst.y, outputStart+blockSize); i<be && j<dbe;) {
+        uint8_t token = u8fromCPU[i++];
+        int32_t litLen = (int32_t(token) >> 4) & 0xf;
+        uint8_t c = uint8_t(litLen | (litLen << 4));
+        int32_t matchLen = int32_t(token) & 0xf;
+        while (c == 0xff) {
+            c = u8fromCPU[i++];
+            litLen += int32_t(c);
+        }
+        /*
+        if ((j & 3) == 0 && (i & 3) == 0 && dbe-j >= 4) {
+            for (uint32_t k = 0; k < litLen; i+=4, k+=4, j+=4) {
+                i32heap[j/4] = i32fromCPU[i/4];
+            }
+        } else
+        */
+        {
+            for (uint32_t k = 0; k < litLen; i++, k++, j++) {
+                heap[j] = fromCPU[i];
+            }
+        }
+        //FREE(println(str(ivec4(token, litLen, j, i))));
+
+        if (((j-outputStart) & 8191) == 0 && matchLen == 0) { // End of LZ4 block
+            //FREE(println( concat(str('-'), str('-'), str('\n')) ));
+            //FREE(println(string(j-litLen-matchLen, j)));
+            continue;
+        }
+
+        int32_t matchOff = (int32_t(u8fromCPU[i  ]) << 0)
+                         | (int32_t(u8fromCPU[i+1]) << 8);
+        i += 2;
+        c = uint8_t(matchLen | (matchLen << 4));
+        //FREE(println(str(int32_t(c))));
+        matchLen += 4;
+        while (c == 0xff) {
+            c = u8fromCPU[i++];
+            matchLen += int32_t(c);
+        }
+        ptr_t m = j - matchOff;
+        /*
+        if ((j & 3) == 0 && (i & 3) == 0 && matchOff >= 4) {
+            for (uint32_t k = 0; k < matchLen; j+=4, k+=4, m+=4) {
+                i32heap[j/4] = i32heap[m/4];
+            }
+        } else 
+        */
+        {
+            for (int32_t k = 0; k < matchLen; k++, j++, m++) {
+                heap[j] = heap[m];
+            }
+        }
+        //FREE(println(str( ivec4(matchOff, matchLen, j, dbe) )));
+        //FREE(println(string(j-litLen-matchLen, j)));
+    }
+    //println(string(dst.x+blockIndex*blockSize, min(dst.y, dst.x+blockIndex*blockSize+blockSize)));
+}
+
 
 void main() {
     initGlobals();
@@ -69,26 +147,37 @@ void main() {
     bool found = false;
     char p = heap[pattern.x];
 
+    ptr_t hitStart = (tgHeapStart + decompressedSize + 3) / 4 * 4;
+
     while (done == 0) {
         FREE(FREE_IO(
             barrier(); memoryBarrier();
 
             if (ThreadLocalID == 0) {
                 fromCPUPtr = tgHeapStart;
-                
-                io r = read(filename, wgOff, wgBufSize, string(tgHeapStart, tgHeapStart + wgBufSize));
-                wgBuf = awaitIO(r, true);
-                
-                if (strLen(wgBuf) != wgBufSize) {
-                    done = strLen(wgBuf) == 0 ? 2 : 1;
+
+                io r = read(filename, wgOff, wgBufSize, string(tgHeapStart, tgHeapStart + (HEAP_SIZE * ThreadLocalCount)));
+                wgBuf = awaitIO(r, true, decompressedSize);
+
+                if (decompressedSize != wgBufSize) {
+                    done = decompressedSize == 0 ? 2 : 1;
                 }
-                groupHeapPtr = tgHeapStart;
+                groupHeapPtr = (tgHeapStart + decompressedSize + 3) / 4 * 4;
+                hitStart = groupHeapPtr;
             }
 
             barrier(); memoryBarrier();
 
             if (done == 2) break;
+
+            lz4DecompressFromCPUToHeap(ThreadLocalID, 8192, wgBuf, string(tgHeapStart, tgHeapStart + decompressedSize));
+
+            if (ThreadLocalID == 0) {
+                wgBuf = string(tgHeapStart, tgHeapStart + decompressedSize);
+            }
             
+            barrier(); memoryBarrier();
+
             string buf = string(
                 min(wgBuf.y, wgBuf.x + ThreadLocalID * blockSize),
                 min(wgBuf.y, wgBuf.x + (ThreadLocalID+1) * blockSize + patternLength)
@@ -102,16 +191,16 @@ void main() {
             if (ThreadLocalID == 0) {
                 fromCPUPtr = tgHeapStart;
                 toCPUPtr = tgHeapStart;
-                ptr_t start = tgHeapStart / 4;
+                ptr_t start = hitStart / 4;
                 ptr_t end = groupHeapPtr / 4;
                 
                 if (start != end) {
-                    heapPtr = groupHeapPtr;
+                    heapPtr = tgHeapStart;
                     for (int j = start; j < end; j++) {
                         str(int64_t(i32heap[j]) + wgOff);
                         _w('\n');
                     }
-                    print(string(groupHeapPtr, heapPtr));
+                    print(string(tgHeapStart, heapPtr));
                 }
 
                 wgOff += int64_t(ThreadCount * blockSize);

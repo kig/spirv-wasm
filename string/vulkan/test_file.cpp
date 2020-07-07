@@ -1,4 +1,5 @@
 #include "compute_application.hpp"
+#include <malloc.h>
 
 class App : public ComputeApplication
 {
@@ -9,6 +10,23 @@ class App : public ComputeApplication
     }
 
     void runProgram() {
+        /*
+        int n = 20;
+        int len = n * 1 * 1048576;
+        char *c = (char*)memalign(2097152, len);
+        char *d = (char*)mappedToGPUMemory;
+        //char *d = (char*)memalign(2097152, len);
+        memset(c, 5, len);
+        std::thread threads[n];
+        std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
+        int i;
+        for (i = 0; i < 100; i++) {
+            for (int j = 0; j < n; j++) threads[j] = std::thread(memcpy, d+(j*len/n), c+(j*len/n), len/n);
+            for (int j = 0; j < n; j++) threads[j].join();
+        }
+        std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
+        printf("%.2f GB/s\n\n", ((float)len * i) / 1e9 / (0.000001 * std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()));
+        */
         std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
         int i;
         for (i = 0; i < 1; i++) {

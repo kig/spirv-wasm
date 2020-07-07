@@ -3,6 +3,9 @@
 
 layout ( local_size_x = 4, local_size_y = 1, local_size_z = 1 ) in;
 
+#define rg(i,n) for (int i=0,_l_=(n); i<_l_; i++)
+#define mapIO(i, n, f) { io _ios_[n]; rg(i, n) _ios_[i] = f; rg(i, n) awaitIO(_ios_[i]); }
+
 
 bool testRead() {
     string r1 = readSync("hello.txt", malloc(100));
@@ -42,24 +45,26 @@ bool testWrite() {
 }
 
 bool testRunCmd() {
-    awaitIO(runCmd(concat("echo Hello from thread ", str(ThreadID))));
+    FREE(FREE_IO(
+        awaitIO(runCmd(concat("echo Hello from thread ", str(ThreadID))));
+        awaitIO(runCmd(concat(
+            "node -e 'fs=require(`fs`); fs.writeFileSync(`node-${", 
+            str(ThreadID),
+            "}.txt`, Date.now().toString())'"
+        )));
+    ))
+    string res = readSync(concat("node-", str(ThreadID), ".txt"), malloc(1000));
+    println(concat("Node says ", res));    
+    deleteFile(concat("node-", str(ThreadID), ".txt"));
     return true;
 }
 
-#define rg(i,n) for (int i=0,_l_=(n); i<_l_; i++)
-#define mapIO(i, n, f) { io _ios_[n]; rg(i, n) _ios_[i] = f; rg(i, n) awaitIO(_ios_[i]); }
-
 bool testLs() {
-
     string dir = concat("dir-", str(ThreadID));
     awaitIO(mkdir(dir));
-
     mapIO(i, 10, createFile(concat(dir, "/", str(i))));
-
     stringArray res = awaitIO(ls(dir, malloc(1000)));
-
     mapIO(i, 10, deleteFile(concat(dir, "/", str(i))));
-
     awaitIO(rmdir(dir));
 
     bool ok = true;
@@ -74,7 +79,6 @@ bool testLs() {
         }
         ok = ok && found;
     }
-
     return ok;
 }
 
