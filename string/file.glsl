@@ -17,7 +17,7 @@ struct ioRequest {
     int64_t count;
     i32vec2 filename;
     i32vec2 data;
-    int32_t _pad10;
+    int32_t compression;
     int32_t _pad11;
     int32_t _pad12;
     int32_t _pad13;
@@ -147,6 +147,7 @@ io requestIO(ioRequest request) {
 
 alloc_t awaitIO(io ioReq, inout int32_t status, bool noCopy, out size_t ioCount) {
     if (ioRequests[ioReq.index].status != IO_NONE) {
+        // Could do data stream decompression while receiving?
         while (
             ioRequests[ioReq.index].status < IO_COMPLETE ||
             ioRequests[ioReq.index].data.y == -1
@@ -184,16 +185,6 @@ alloc_t awaitIO(io ioReq, inout int32_t status, bool noCopy, out size_t ioCount)
         ioRequests[ioReq.index].status = IO_HANDLED;
         return req.data;
     }
-    /*
-    if (req.ioType == IO_READ) {
-        // decompress LZ4
-        ioCount = size_t(req.count);
-        alloc_t s = alloc_t(ioReq.heapBufStart, ioReq.heapBufStart + ioCount);
-        lz4DecompressFromCPUToHeap(req.data, s);
-        ioRequests[ioReq.index].status = IO_HANDLED;
-        return s;
-    }
-    */
 
     alloc_t s = alloc_t(ioReq.heapBufStart, ioReq.heapBufStart + strLen(req.data));
     copyFromCPUToHeap(req.data, s);
@@ -223,6 +214,10 @@ alloc_t awaitIO(io request, bool noCopy, out size_t count) {
 
 io read(string filename, int64_t offset, size_t count, string buf) {
     return requestIO(ioRequest(IO_READ, IO_START, offset, min(count, strLen(buf)), filename, buf,0,0,0,0,0,0));
+}
+
+io read(string filename, int64_t offset, size_t count, string buf, int32_t compression) {
+    return requestIO(ioRequest(IO_READ, IO_START, offset, min(count, strLen(buf)), filename, buf, compression, 0,0,0,0,0));
 }
 
 io read(string filename, string buf) {

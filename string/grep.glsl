@@ -16,7 +16,7 @@ bool startsWithIO(string s, string pattern) {
 }
 
 void addHit(int32_t k, int32_t off, inout bool found) {
-    i32heap[atomicAdd(groupHeapPtr, 4)/4] = int32_t(k) + off;
+    i32fromCPU[atomicAdd(groupHeapPtr, 4)/4] = int32_t(k) + off;
     found = true;
 }
 
@@ -45,11 +45,59 @@ bool grepBuffer(int32_t blockSize, string buf, string pattern, char p, int32_t o
     return found;
 }
 
+/*
+i64vec4 rotateLeft(i64vec4 v, i64vec4 v2, int offset) {
+    return (v << offset) | (i64vec4(v.yzw, v2.x) >> (64-offset));
+}
+
+i64vec4 rotateRight(i64vec4 v, i64vec4 v2, int offset) {
+    return (i64vec4(v.w, v2.xyz) << (64-offset)) | (v2 >> offset);
+}
+
+i64vec4 rotateLeftBytes(i64vec4 v1, i64vec4 v2, int offset) {
+    if (offset >= 24) {
+        v1 = i64vec4(v1.w, v2.xyz);
+        v2 = i64vec4(v2.w, 0, 0, 0);
+    } else if (offset >= 16) {
+        v1 = i64vec4(v1.zw, v2.xy);
+        v2 = i64vec4(v2.zw, 0, 0);
+    } else if (offset >= 8) {
+        v1 = i64vec4(v1.yzw, v2.x);
+        v2 = i64vec4(v2.yzw, 0);
+    }
+    return rotateLeft(v1, v2, (offset%8)*8);
+}
+
+i64vec4 rotateRightBytes(i64vec4 v1, i64vec4 v2, int offset) {
+    if (offset >= 24) {
+        v1 = i64vec4(v1.xyz, v2.x);
+        v2 = i64vec4(v2.yzw, 0);
+    } else if (offset >= 16) {
+        v1 = i64vec4(v1.xy, v2.xy);
+        v2 = i64vec4(v2.zw, 0, 0);
+    } else if (offset >= 8) {
+        v1 = i64vec4(v1.x, v2.xyz);
+        v2 = i64vec4(v2.w, 0, 0, 0);
+    }
+    return rotateRight(v1, v2, (offset%8)*8);
+}
+
+i64vec4 unalignedLoad(ptr_t i) {
+    int idx = i / 32;
+    return rotateLeftBytes(i64v4fromCPU[idx], i64v4fromCPU[idx+1], i % 32);
+}
+
+void unalignedStore(ptr_t i, i64vec4 v2) {
+    int idx = i / 32;
+    i64v4heap[idx] = rotateRightBytes(i64v4heap[idx], v2, i % 32);
+    i64v4heap[idx+1] = rotateRightBytes(v2, i64v4heap[idx+1], i % 32);
+}
+*/
 
 #define LZ4_GROUP_SIZE 4
 #define LZ4_STREAM_BLOCK_SIZE 8192
 
-void lz4DecompressFromCPUToHeap(int32_t blockIndex, int32_t blockSize, string cmp, string dst) {
+void lz4DecompressBlockStreamFromCPUToHeap(int32_t blockIndex, int32_t blockSize, string cmp, string dst) {
     if (blockIndex >= 128) return;
 
     ptr_t i = cmp.x + 128 * 4;
@@ -57,7 +105,7 @@ void lz4DecompressFromCPUToHeap(int32_t blockIndex, int32_t blockSize, string cm
     for (int32_t b=0; b<=blockIndex && b<128; b++) {
         len = i32fromCPU[cmp.x/4 + b];
         if (b == blockIndex || len <= 0) break;
-        i += (len+7)/8*8;
+        i += len;
     }
     if (len <= 0 || i >= cmp.y) {
         return;
@@ -142,13 +190,13 @@ void main() {
             if (ThreadLocalID == 0) {
                 fromCPUPtr = tgHeapStart;
 
-                io r = read(filename, wgOff, wgBufSize, string(tgHeapStart, tgHeapStart + (HEAP_SIZE * ThreadLocalCount)));
+                io r = read(filename, wgOff, wgBufSize, string(tgHeapStart, tgHeapStart + (HEAP_SIZE * ThreadLocalCount)), IO_COMPRESS_LZ4_BLOCK_STREAM | LZ4_STREAM_BLOCK_SIZE);
                 wgBuf = awaitIO(r, true, decompressedSize);
 
                 if (decompressedSize != wgBufSize) {
                     done = decompressedSize == 0 ? 2 : 1;
                 }
-                groupHeapPtr = (tgHeapStart + decompressedSize + 3) / 4 * 4;
+                groupHeapPtr = tgHeapStart;
                 hitStart = groupHeapPtr;
             }
 
@@ -157,7 +205,7 @@ void main() {
             if (done == 2) break;
 
             for (int32_t i = 0; i < 128; i += ThreadLocalCount/LZ4_GROUP_SIZE) {
-                lz4DecompressFromCPUToHeap(i + ThreadLocalID/LZ4_GROUP_SIZE, LZ4_STREAM_BLOCK_SIZE, wgBuf, string(tgHeapStart, tgHeapStart + decompressedSize));
+                lz4DecompressBlockStreamFromCPUToHeap(i + ThreadLocalID/LZ4_GROUP_SIZE, LZ4_STREAM_BLOCK_SIZE, wgBuf, string(tgHeapStart, tgHeapStart + decompressedSize));
             }
 
             if (ThreadLocalID == 0) {
@@ -185,7 +233,7 @@ void main() {
                 if (start != end) {
                     heapPtr = tgHeapStart;
                     for (int j = start; j < end; j++) {
-                        str(int64_t(i32heap[j]) + wgOff);
+                        str(int64_t(i32fromCPU[j]) + wgOff);
                         _w('\n');
                     }
                     print(string(tgHeapStart, heapPtr));

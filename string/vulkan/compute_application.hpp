@@ -77,7 +77,7 @@ struct ioRequest {
     int32_t filename_end;
     int32_t result_start;
     int32_t result_end;
-    int32_t _pad10;
+    int32_t compression;
     int32_t _pad11;
     int32_t _pad12;
     int32_t _pad13;
@@ -1098,13 +1098,12 @@ class ComputeApplication
             int32_t bytes = 0;
             int64_t totalRead = 0;
 
-            bool compressedRead = true;
-            bool useZstd = false;
-            bool useBlocks = true;
+            int32_t compressionType = req.compression & 0xff000000;
+            int32_t compressionData = req.compression & 0x00ffffff;
 
-            if (compressedRead) {
+            if (compressionType != 0) {
 
-                if (useZstd) {
+                if (compressionType == IO_COMPRESS_ZSTD) {
                     size_t const buffInSize = ZSTD_CStreamInSize();
                     void*  const buffIn  = malloc(buffInSize);
                     size_t const buffOutSize = ZSTD_CStreamOutSize();
@@ -1138,8 +1137,10 @@ class ComputeApplication
                     ZSTD_freeCCtx(cctx);
                     free(buffIn);
                     free(buffOut);
-                } else {
-                    // Use LZ4
+                    req.status = IO_COMPLETE;
+
+                } else if (compressionType == IO_COMPRESS_LZ4_BLOCK || compressionType == IO_COMPRESS_LZ4_BLOCK_STREAM) {
+                    // Use LZ4 block compression
 
                     LZ4_stream_t lz4Stream_body;
                     LZ4_stream_t* lz4Stream = &lz4Stream_body;
@@ -1153,12 +1154,14 @@ class ComputeApplication
                     LZ4_initStream(lz4Stream, sizeof (*lz4Stream));
 
                     int64_t readCount = req.count;
-                    if (useBlocks) {
+                    if (compressionType == IO_COMPRESS_LZ4_BLOCK_STREAM) {
+
+                        const int32_t blockSize = compressionData;
 
                         int32_t blockOff = 0;
                         int32_t blockBytes = 0;
 
-                        int32_t blockCount = 128;
+                        const int32_t blockCount = 128;
                         bytes = 128 * 4;
 
                         for (int i = 0; i < blockCount; i++) {
@@ -1176,9 +1179,7 @@ class ComputeApplication
                             memcpy(toGPUBuf + req.result_start + bytes, cmpBuf, cmpBytes);
                             bytes += cmpBytes;
                             blockBytes += cmpBytes;
-                            if ((totalRead & 8191) == 0) {
-                                // Align compressed blocks on 8-byte boundary.
-                                bytes = (bytes+7)/8 * 8;
+                            if ((totalRead & (blockSize-1)) == 0) {
                                 *(uint32_t*)(toGPUBuf + req.result_start + blockOff) = blockBytes;
                                 if (verbose) printf("%d\n", blockBytes);
                                 blockBytes = 0;
@@ -1204,16 +1205,22 @@ class ComputeApplication
                         }
                     }
                     if (verbose && totalRead > 0) printf("Compression ratio: %.4f\n", (float)bytes/totalRead);
+                    req.status = IO_COMPLETE;
+                } else if (compressionType == IO_COMPRESS_LZ4) { // Framed LZ4 stream
+                    req.status = IO_ERROR; // Not implemented
+                } else { // Unknown compression type
+                    req.status = IO_ERROR;
                 }
 
-            } else {
+            } else { // Uncompressed read.
+
                 bytes = fread(toGPUBuf + req.result_start, 1, req.count, fd);
                 totalRead = bytes;
+                req.status = IO_COMPLETE;
             }
             if (file == NULL) closeFile(fd);
             ioReqs->requests[i].count = totalRead;
             ioReqs->requests[i].result_end = req.result_start + bytes;
-            req.status = IO_COMPLETE;
 
         } else if (req.ioType == IO_WRITE) {
             auto fd = openFile(filename, file, "rb+");
@@ -1229,6 +1236,7 @@ class ComputeApplication
             req.status = IO_COMPLETE;
 
         } else if (req.ioType == IO_CREATE) {
+            // Create new file
             auto fd = openFile(filename, file, "wb");
             app->readFromGPUIO(req.result_start, req.count);
             int32_t bytes = fwrite(fromGPUBuf + req.result_start, 1, req.count, fd);
@@ -1237,17 +1245,21 @@ class ComputeApplication
             req.status = IO_COMPLETE;
 
         } else if (req.ioType == IO_DELETE) {
+            // Delete file
             remove(filename);
             req.status = IO_COMPLETE;
 
         } else if (req.ioType == IO_TRUNCATE) {
+            // Truncate file
             truncate(filename, req.count);
             req.status = IO_COMPLETE;
 
         } else if (req.ioType == IO_NOP) {
+            // Do nothing
             req.status = IO_COMPLETE;
 
         } else if (req.ioType == IO_PINGPONG) {
+            // Send the received data back
             app->readFromGPUIO(req.result_start, req.count);
             memcpy(toGPUBuf + req.result_start, fromGPUBuf + req.offset, req.count);
             ioReqs->requests[i].result_end = req.result_start + req.count;
@@ -1288,7 +1300,7 @@ class ComputeApplication
             req.status = IO_ERROR;
 
         } else if (req.ioType == IO_CD) {
-            // Make dir at filename
+            // Change directory
             int result = chdir(filename);
             ioReqs->requests[i].result_start = result;
             ioReqs->requests[i].result_end = 0;
@@ -1309,6 +1321,7 @@ class ComputeApplication
             req.status = IO_COMPLETE;
 
         } else if (req.ioType == IO_GETCWD) {
+            // Get current working directory
             char *s = getcwd(NULL, req.count);
             int32_t len = strlen(s);
             printf("getcwd: %s\n", s);
@@ -1318,6 +1331,7 @@ class ComputeApplication
             req.status = IO_COMPLETE;
 
         } else if (req.ioType == IO_OPEN) {
+            // Open file
             FILE* fd = fopen(filename, req.offset == 0 ? "rb" : (req.offset == 1 ? "rb+" : (req.offset == 2 ? "rw" : "ra")));
             *(int32_t*)(toGPUBuf + req.result_start) = fileno(fd);
             ioReqs->requests[i].result_end = req.result_start + 4;
@@ -1326,6 +1340,7 @@ class ComputeApplication
             req.status = IO_COMPLETE;
 
         } else if (req.ioType == IO_CLOSE) {
+            // Close open file
             if (file) {
                 fclose(file);
                 std::lock_guard<std::mutex> guard(fileCache_mutex);
@@ -1399,6 +1414,14 @@ class ComputeApplication
         } else if (req.ioType == IO_RECV) {
             // Receive data from a socket - returns data only if socket has data
             req.status = IO_ERROR;
+
+        } else if (req.ioType == IO_CHROOT) {
+            // Chdir to given dir and make it root
+            int result = chdir(filename);
+            if (result == 0) result = chroot(".");
+            ioReqs->requests[i].result_start = result;
+            ioReqs->requests[i].result_end = 0;
+            req.status = IO_COMPLETE;
 
         } else if (req.ioType == IO_EXIT) {
             req.status = IO_COMPLETE;

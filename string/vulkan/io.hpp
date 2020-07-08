@@ -9,6 +9,18 @@
 #define IO_HANDLED 255
 
 
+// IO compression
+
+// LZ4 compressed stream of independent blocks with block size in the lower 24 bits
+#define IO_COMPRESS_LZ4_BLOCK_STREAM (3<<24)
+// Single LZ4 compressed block
+#define IO_COMPRESS_LZ4_BLOCK (2<<24)
+// LZ4 frame stream (Found in e.g. .lz4 files)
+#define IO_COMPRESS_LZ4 (1<<24)
+// ZSTD frame stream - No GPU decompressor
+#define IO_COMPRESS_ZSTD (4<<24)
+
+
 // IO calls
 
 // Read from a file at given offset.
