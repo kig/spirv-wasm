@@ -6,9 +6,6 @@ shared int64_t wgOff;
 shared string wgBuf;
 shared int32_t decompressedSize;
 shared ptr_t groupHeapPtr;
-shared io groupRead;
-
-shared uint8_t decompressed[8192];
 
 bool startsWithIO(string s, string pattern) {
     if (strLen(pattern) > strLen(s)) return false;
