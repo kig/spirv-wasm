@@ -4,7 +4,7 @@ class Grep : public ComputeApplication
 {
 public:
     Grep() {
-        workSize[0] = 32;
+        workSize[0] = 64;
         timings = true;
     }
 };

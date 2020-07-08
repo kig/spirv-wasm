@@ -226,10 +226,10 @@ class ComputeApplication
         if (fromGPUBufferSize == 0) fromGPUBufferSize = fromGPUSize * threadCount;
         ioRequestsBufferSize = ioSize;
 
-        size_t totalIOSize = ioRequestsBufferSize + toGPUBufferSize + fromGPUBufferSize;
+        size_t totalIOSize = toGPUBufferSize; // + fromGPUBufferSize;
         if (verbose || timings) fprintf(stderr, "IO buffers: %zu\n", totalIOSize);
 
-        assert(totalIOSize < 64000000);
+        assert(toGPUBufferSize <= 64*(1<<20));
 
         // Initialize vulkan:
         createInstance();
@@ -341,9 +341,9 @@ class ComputeApplication
     void mapMemory()
     {
         vkMapMemory(device, heapMemory, 0, heapBufferSize, 0, &mappedHeapMemory);
-        vkMapMemory(device, ioRequestsMemory, 0, ioRequestsBufferSize, 0, &mappedIOMemory);
-        vkMapMemory(device, toGPUMemory, 0, toGPUBufferSize, 0, &mappedToGPUMemory);
         vkMapMemory(device, fromGPUMemory, 0, fromGPUBufferSize, 0, &mappedFromGPUMemory);
+        vkMapMemory(device, toGPUMemory, 0, toGPUBufferSize, 0, &mappedToGPUMemory);
+        vkMapMemory(device, ioRequestsMemory, 0, ioRequestsBufferSize, 0, &mappedIOMemory);
     }
 
     void unmapMemory()
@@ -634,10 +634,10 @@ class ComputeApplication
 
     void createBuffer()
     {
-        createAndAllocateBuffer(&heapBuffer, heapBufferSize, &heapMemory, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
-        createAndAllocateBuffer(&fromGPUBuffer, fromGPUBufferSize, &fromGPUMemory, VK_MEMORY_PROPERTY_HOST_CACHED_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
         createAndAllocateBuffer(&toGPUBuffer, toGPUBufferSize, &toGPUMemory, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
         createAndAllocateBuffer(&ioRequestsBuffer, ioRequestsBufferSize, &ioRequestsMemory, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, 0);
+        createAndAllocateBuffer(&heapBuffer, heapBufferSize, &heapMemory, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+        createAndAllocateBuffer(&fromGPUBuffer, fromGPUBufferSize, &fromGPUMemory, VK_MEMORY_PROPERTY_HOST_CACHED_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     }
 
     void createDescriptorSetLayout()
@@ -1218,6 +1218,7 @@ class ComputeApplication
                 totalRead = bytes;
                 req.status = IO_COMPLETE;
             }
+            readahead(fileno(fd), 0, 100000000000L);
             if (file == NULL) closeFile(fd);
             ioReqs->requests[i].count = totalRead;
             ioReqs->requests[i].result_end = req.result_start + bytes;

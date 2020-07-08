@@ -1,4 +1,4 @@
-layout ( local_size_x = 224, local_size_y = 1, local_size_z = 1 ) in;
+layout ( local_size_x = 256, local_size_y = 1, local_size_z = 1 ) in;
 #include "file.glsl"
 
 shared int done;
@@ -6,6 +6,9 @@ shared int64_t wgOff;
 shared string wgBuf;
 shared int32_t decompressedSize;
 shared ptr_t groupHeapPtr;
+shared io groupRead;
+
+shared uint8_t decompressed[8192];
 
 bool startsWithIO(string s, string pattern) {
     if (strLen(pattern) > strLen(s)) return false;
@@ -158,7 +161,6 @@ void lz4DecompressBlockStreamFromCPUToHeap(int32_t blockIndex, int32_t blockSize
 
 
 void main() {
-    initGlobals();
 
     string pattern = aGet(argv, 1);
     string filename = aGet(argv, 2);
@@ -193,6 +195,36 @@ void main() {
                 io r = read(filename, wgOff, wgBufSize, string(tgHeapStart, tgHeapStart + (HEAP_SIZE * ThreadLocalCount)), IO_COMPRESS_LZ4_BLOCK_STREAM | LZ4_STREAM_BLOCK_SIZE);
                 wgBuf = awaitIO(r, true, decompressedSize);
 
+                /*
+                // Streaming IO, hm? 
+                // CPU reads a block of data, memcpys to GPU, increments GPU IO block counter.
+                // The GPU waits for blockCounter > currentBlock || ioDone, processes next block (decompress & search &c.)
+                // This is like the node.js block-oriented IO mechanism.
+                // Issuing IOs at block-level granularity wouldn't work so well because IO calls are quite heavy
+                // (send msg to CPU over PCIe, receive msg from GPU over PCIe, spin up thread, open file, seek, read to PCIe, close, exit thread, receive msg from CPU over PCIe)
+                // (Can be speeded up by moving to a 2-queue design ? (fromCPU, toCPU ioReqs))
+                // Anyway, compare to block IO: send to CPU, recv from GPU, spin up thread, open file, seek, loop { read to PCIe, recv from CPU } close, exit thread, recv from CPU)
+                //
+                // Currently
+                //
+                // CPU:      recv--thread--open--seek--readtoPCIe---------------------------close--writeCompletion
+                //          /                                                                                     \
+                // GPU: send                ....       wait      ....                                              receiveComplete--processData----------------------------------------------|
+                // 
+                //
+                // Block IO
+                //
+                // CPU:      recv--thread--open--seek--readBlock-readBlock-....-readBlock--close--writeCompletion
+                //          /                                   \          \             \                       \
+                // GPU: send      ....       wait      ....      process .. process .. .. process      ...        receiveComplete--processRest--|
+                // 
+                do {
+                    string block = awaitBlock(r, true, decompressedSize);
+                    decompressBlock(block);
+                    advanceSearch(block);
+                } while (strLen(block) > 0);
+                */
+                
                 if (decompressedSize != wgBufSize) {
                     done = decompressedSize == 0 ? 2 : 1;
                 }

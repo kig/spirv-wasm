@@ -2,6 +2,6 @@
 
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 
-cpp $1 | node $DIR/preprocess.js > $2.comp &&
-glslangValidator -V -o $2 $2.comp
-#rm $2.comp
+cpp $1 2>/dev/null | node $DIR/preprocess.js > $2.comp &&
+glslangValidator -V -o $2 $2.comp >/dev/null
+rm $2.comp
