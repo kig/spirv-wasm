@@ -114,7 +114,7 @@
 Design of GPU IO
 ===
 
-Hardware
+Hardware considerations
 ---
 
  - GPUs have around a hundred processors, each with a 32-wide SIMD unit.
@@ -140,6 +140,9 @@ Hardware
  * => Caching data into GPU RAM is important for performance.
  * => Programs that execute faster than the PCIe bus should be run on the CPU if the GPU doesn't have the data in cache.
  * => Fujitsu A64FX-type designs with lots of CPU cores with wide vector units and high bandwidth memory are awesome. No data juggling, no execution environment weirdness.
+
+Software
+---
 
 The IO queue works by using spinlocks on both the CPU and GPU sides.
 The fewer IO requests you make, the less time you spend spinning.
@@ -175,7 +178,11 @@ IOs could have sequence ids.
 Compression of data on the PCIe bus could help. 32 * zstd --format=lz4 --fast -T1 file -o /dev/null goes at 38 GB/s.
 
 Caching file data on the GPU is important for performance, 40x higher bandwidth than CPU page cache over PCIe.
-Without GPU-side caching, you'll likely get better perf on the CPU
+Without GPU-side caching, you'll likely get better perf on the CPU on bandwidth-limited tasks (>50 GB/s throughput.)
+In those tasks, using memory bandwidth to send data to GPU wouldn't help any, best you could achieve is zero slowdown.
+(Memory bandwidth 50 GB/s. CPU processing speed 50 GB/s. Use 10 GB/s of bandwidth to send data to GPU => 
+CPU has only 40 GB/s bandwidth left, GPU can do 10 GB/s => CPU+GPU processing speed 50 GB/s.)
+
 
 Benchmark suite
 ---
@@ -203,7 +210,10 @@ Does it help to combine reads & writes into sequential blocks on CPU-side when p
 
 Caching file descriptors, helps or not?
 
+Appendix A: io_uring operations
+---
 
+IO_uring's design feels a bit low-level for GPU ops
 
 IORING_OP_NOP
 // This operation does nothing at all; the benefits of doing nothing asynchronously are minimal, but sometimes a placeholder is useful.
