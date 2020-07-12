@@ -1267,10 +1267,10 @@ class ComputeApplication
                     const LZ4F_preferences_t kPrefs = {
                         { LZ4F_max256KB, LZ4F_blockLinked, LZ4F_noContentChecksum, LZ4F_frame,
                           0 /* unknown content size */, 0 /* no dictID */ , LZ4F_noBlockChecksum },
-                        -3,   /* compression level; 0 == default */
-                        0,   /* autoflush */
-                        1,   /* favor decompression speed */
-                        { 0, 0, 0 },  /* reserved, must be set to 0 */
+                         -3,   /* compression level; 0 == default */
+                          0,   /* autoflush */
+                          1,   /* favor decompression speed */
+                          { 0, 0, 0 },  /* reserved, must be set to 0 */
                     };
 
                     LZ4F_compressionContext_t ctx;

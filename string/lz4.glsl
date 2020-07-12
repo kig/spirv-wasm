@@ -95,7 +95,7 @@ ptr_t lz4DecompressBlockFromIOToHeap(string cmp, string dst) {
             j += litLen;
         }
 
-        if (((j-dst.x) & 8191) == 0 && matchLen == 0) { // End of LZ4 chunk
+        if (i == be) { // End of LZ4 chunk
             continue;
         }
 
@@ -181,7 +181,7 @@ void lz4DecompressBlockStreamFromIOToHeap(int32_t blockIndex, int32_t blockSize,
     }
 }
 
-int lz4DecompressFramesFromIOToHeap(string cmp, string dst) {
+ptr_t lz4DecompressFramesFromIOToHeap(string cmp, string dst) {
     ptr_t i = cmp.x;
     ptr_t j = dst.x;
     while (i < cmp.y) {

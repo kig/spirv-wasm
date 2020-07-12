@@ -192,8 +192,27 @@ Compression of data on the PCIe bus could help. 32 * zstd --format=lz4 --fast -T
 Caching file data on the GPU is important for performance, 40x higher bandwidth than CPU page cache over PCIe.
 Without GPU-side caching, you'll likely get better perf on the CPU on bandwidth-limited tasks (>50 GB/s throughput.)
 In those tasks, using memory bandwidth to send data to GPU wouldn't help any, best you could achieve is zero slowdown.
-(Memory bandwidth 50 GB/s. CPU processing speed 50 GB/s. Use 10 GB/s of bandwidth to send data to GPU => 
+(Memory bandwidth 50 GB/s. CPU processing speed 50 GB/s. Use 10 GB/s of bandwidth to send data to GPU =>
 CPU has only 40 GB/s bandwidth left, GPU can do 10 GB/s => CPU+GPU processing speed 50 GB/s.)
+
+The IO layer should do the "right thing", e.g. scatter writes to a single filename should all go to the same fd using pwrite. The IO layer
+should also try to turn scattered reads and writes into sequential ones if they're not to DRAM / Optane. Mixed read-write workloads into the same
+file should have the reads happening from the same fd as the writes are going to.
+
+For some tasks it'd be nice to command the IO layer without involving the GPU. Maybe send a small shader program to run on the IO processor (ha ha).
+For example, the IO runtime can compress LZ4 frames at 22 GB/s. This is useful by itself: write it to a file, write it over network, etc.
+No need to involve the GPU in that.
+
+But how to do this sort of DMA IO redirect? It is like the copyrange / splice stuff. You have two fds, then tell the kernel (or IO runtime in this case)
+to read from one and write into the other. Except that now you also tell it to do some stuff like "pull these chunks in parallel from this file,
+compress them in parallel, and put them into this other file - in order" (The last part is important.)
+
+You'd issue parallel compressed reads but tell the IO runtime to toss the data into a CPU-side memory buffer. Then you'd do a prefix sum over the reads in order
+to calculate write offsets. As soon as you'd have the offset for a write, you'd issue a write to move the data from the CPU memory buffer to the target file.
+The reason for issuing the write ASAP is, well, sequential memcpy peaks at 7 GB/s. If your compressor is doing 22 GB/s, need 4 parallel writes.
+
+For piping, you'll be stuck to single memcpy speeds, and would issue writes after previous writes have finished. Don't know about networking, how do you hit
+those 200-400 Gbps rates.
 
 
 Benchmark suite
