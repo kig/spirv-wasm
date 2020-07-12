@@ -74,7 +74,7 @@ void main() {
 
                 io r = read(filename, wgOff, wgBufSize, string(tgHeapStart, tgHeapStart + (HeapSize * ThreadLocalCount)), IO_COMPRESS_LZ4_BLOCK_STREAM | LZ4_STREAM_BLOCK_SIZE | IO_COMPRESS_SPEED_7);
                 //io r = read(filename, wgOff, wgBufSize, string(tgHeapStart, tgHeapStart + (HeapSize * ThreadLocalCount)), IO_COMPRESS_LZ4);
-                wgBuf = awaitIO(r, false, decompressedSize, isCompressed);
+                wgBuf = awaitIO(r, true, decompressedSize, isCompressed);
 
                 if (!isCompressed) copyFromIOToHeap(wgBuf, string(tgHeapStart, tgHeapStart + strLen(wgBuf)));
 
@@ -91,7 +91,7 @@ void main() {
 
             if (isCompressed) {
                 for (int32_t i = 0; i < 128; i += ThreadLocalCount/LZ4_GROUP_SIZE) {
-                    lz4DecompressBlockStreamFromCPUToHeap(i + ThreadLocalId/LZ4_GROUP_SIZE, LZ4_STREAM_BLOCK_SIZE, wgBuf, string(tgHeapStart, tgHeapStart + decompressedSize));
+                    lz4DecompressBlockStreamFromIOToHeap(i + ThreadLocalId/LZ4_GROUP_SIZE, LZ4_STREAM_BLOCK_SIZE, wgBuf, string(tgHeapStart, tgHeapStart + decompressedSize));
                 }
             }
             

@@ -48,7 +48,7 @@ void unalignedStore(ptr_t i, i64vec4 v2) {
 */
 
 
-void lz4DecompressBlockFromIOToHeap(string cmp, string dst) {
+ptr_t lz4DecompressBlockFromIOToHeap(string cmp, string dst) {
     int32_t subId = (ThreadLocalId % LZ4_GROUP_SIZE);
 
     ptr_t j = dst.x;
@@ -70,7 +70,7 @@ void lz4DecompressBlockFromIOToHeap(string cmp, string dst) {
             j += litLen;
         }
 
-        if (((j-outputStart) & 8191) == 0 && matchLen == 0) { // End of LZ4 chunk
+        if (((j-dst.x) & 8191) == 0 && matchLen == 0) { // End of LZ4 chunk
             continue;
         }
 
@@ -166,17 +166,30 @@ void lz4DecompressBlockStreamFromIOToHeap(int32_t blockIndex, int32_t blockSize,
 #define LZ4_ERROR_MISSING_CONTENT_CHECKSUM 3
 #define LZ4_ERROR_DICT_NOT_SUPPORTED 4
 
+uint32_t readU32fromIO(ptr_t i) {
+    return (
+          (uint32_t(u8fromIO[i])   << 0u) 
+        | (uint32_t(u8fromIO[i+1]) << 8u) 
+        | (uint32_t(u8fromIO[i+2]) << 16u) 
+        | (uint32_t(u8fromIO[i+3]) << 24u)
+    );
+}
+
+uint64_t readU64fromIO(ptr_t i) {
+    return packUint2x32(u32vec2(readU32fromIO(i), readU32fromIO(i+4)));
+}
+
 int lz4DecompressFramesFromIOToHeap(string cmp, string dst) {
     ptr_t i = cmp.x;
     ptr_t j = dst.x;
     while (i < cmp.y) {
-        uint32_t magic = u32fromIO[i/4];
+        uint32_t magic = readU32fromIO(i);
         i += 4;
         if (magic != 0x184D2204) { // Not an LZ4 frame
             if ((magic & 0xfffffff0) == 0x184D2A50) { // Skippable frame
-                uint32_t frameSize = u32fromIO[i/4];
+                uint32_t frameSize = readU32fromIO(i);
                 i += 4;
-                i += frameSize;
+                i += ptr_t(frameSize);
                 continue;
             }
             return LZ4_ERROR_MAGIC;
@@ -198,12 +211,12 @@ int lz4DecompressFramesFromIOToHeap(string cmp, string dst) {
         uint32_t dictId = 0;
 
         if (contentSizeFlag) {
-            contentSize = u64fromIO[i/8];
+            contentSize = readU64fromIO(i);
             i += 8;
         }
 
-        if (dictIdFlag) [
-            dictId = u32fromIO[i/4];
+        if (dictIdFlag) {
+            dictId = readU32fromIO(i);
             i += 4;
             return LZ4_ERROR_DICT_NOT_SUPPORTED;
         }
@@ -211,7 +224,7 @@ int lz4DecompressFramesFromIOToHeap(string cmp, string dst) {
         uint8_t headerChecksum = u8fromIO[i++];
 
         while (i < cmp.y) {
-            uint32_t blockSize = u32fromIO[i/4];
+            uint32_t blockSize = readU32fromIO(i);
             i += 4;
             if (blockSize == 0) break;
 
@@ -222,12 +235,12 @@ int lz4DecompressFramesFromIOToHeap(string cmp, string dst) {
                 j = lz4DecompressBlockFromIOToHeap(string(i, i+blockSize), string(j, dst.y));
             } else {
                 copyFromIOToHeap(string(i, i + blockSize), string(j, j + blockSize));
-                j += blockSize;
+                j += ptr_t(blockSize);
             }
-            i += blockSize;
-            uint32_t blockCheckSum = 0;
+            i += ptr_t(blockSize);
+            uint32_t blockChecksum = 0;
             if (blockChecksumFlag) {
-                blockChecksum = u32fromIO[i/4];
+                blockChecksum = readU32fromIO(i);
                 i += 4;
             }
         }
@@ -235,7 +248,7 @@ int lz4DecompressFramesFromIOToHeap(string cmp, string dst) {
             if (i > cmp.y-4) {
                 return LZ4_ERROR_MISSING_CONTENT_CHECKSUM;
             }
-            uint32_t contentChecksum = u32fromIO[i/4];
+            uint32_t contentChecksum = readU32fromIO(i);
             i += 4;
         }
     }
