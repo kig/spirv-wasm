@@ -1,21 +1,20 @@
-#define HEAP_SIZE 4096
-#define FROM_CPU_SIZE 10
-#define TO_CPU_SIZE 4096
+HeapSize = 4096;
+FromIOSize = 10;
+ToIOSize = 4096;
 
-layout ( local_size_x = 200, local_size_y = 1, local_size_z = 1 ) in;
+ThreadGroupCount = 1;
+ThreadLocalCount = 1;
 
 layout(std430, binding = 0) buffer outputBuffer { int32_t outputs[]; };
 
 
 #include "string.glsl"
 
-
 void main() {
-	initGlobals();
 
 	ptr_t heapTop = heapPtr;
 	
-	ptr_t op = (ThreadID+1) * HEAP_SIZE/4 - 256;
+	ptr_t op = (ThreadId+1) * (HeapSize/4) - 256;
 
 	string emptys = "";
 

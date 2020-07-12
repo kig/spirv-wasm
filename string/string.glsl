@@ -590,7 +590,3 @@ string trim(string s) {
 }
 
 %%GLOBALS%%
-
-void initGlobals() {
-%%INIT%%
-}

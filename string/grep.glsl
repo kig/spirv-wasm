@@ -1,34 +1,28 @@
-layout ( local_size_x = 256, local_size_y = 1, local_size_z = 1 ) in;
+#!/usr/bin/env gls
+
+ThreadLocalCount = 256;
+ThreadGroupCount = 64;
+
+#define LZ4_GROUP_SIZE 8
+#define LZ4_STREAM_BLOCK_SIZE 16384
+
 #include "file.glsl"
+#include "lz4.glsl"
 
 shared int done;
 shared int64_t wgOff;
 shared string wgBuf;
 shared int32_t decompressedSize;
 shared ptr_t groupHeapPtr;
-
-bool startsWithIO(string s, string pattern) {
-    if (strLen(pattern) > strLen(s)) return false;
-    for (ptr_t i = s.x, j = pattern.x; i < s.y && j < pattern.y; i++, j++) {
-        if (fromCPU[i] != heap[j]) return false;
-    }
-    return true;
-}
+shared bool isCompressed;
 
 void addHit(int32_t k, int32_t off, inout bool found) {
-    i32fromCPU[atomicAdd(groupHeapPtr, 4)/4] = int32_t(k) + off;
+    i32fromIO[atomicAdd(groupHeapPtr, 4)/4] = int32_t(k) + off;
     found = true;
 }
 
 bool grepBuffer(int32_t blockSize, string buf, string pattern, char p, int32_t off) {
     bool found = false;
-    /*
-    for (size_t i = 0, l = strLen(buf); i < blockSize; i++) {
-        ptr_t idx = buf.x + i;
-        if (i < l && p == fromCPU[idx] && startsWithIO(string(idx, buf.y), pattern)) addHit(i, off, found);
-    }
-    return found;
-    */
     for (size_t i = 0, l = strLen(buf); i < blockSize; i+=32) {
         ptr_t idx = buf.x + i;
         i64vec4 v = i64v4heap[idx / 32];
@@ -45,185 +39,47 @@ bool grepBuffer(int32_t blockSize, string buf, string pattern, char p, int32_t o
     return found;
 }
 
-/*
-i64vec4 rotateLeft(i64vec4 v, i64vec4 v2, int offset) {
-    return (v << offset) | (i64vec4(v.yzw, v2.x) >> (64-offset));
-}
-
-i64vec4 rotateRight(i64vec4 v, i64vec4 v2, int offset) {
-    return (i64vec4(v.w, v2.xyz) << (64-offset)) | (v2 >> offset);
-}
-
-i64vec4 rotateLeftBytes(i64vec4 v1, i64vec4 v2, int offset) {
-    if (offset >= 24) {
-        v1 = i64vec4(v1.w, v2.xyz);
-        v2 = i64vec4(v2.w, 0, 0, 0);
-    } else if (offset >= 16) {
-        v1 = i64vec4(v1.zw, v2.xy);
-        v2 = i64vec4(v2.zw, 0, 0);
-    } else if (offset >= 8) {
-        v1 = i64vec4(v1.yzw, v2.x);
-        v2 = i64vec4(v2.yzw, 0);
-    }
-    return rotateLeft(v1, v2, (offset%8)*8);
-}
-
-i64vec4 rotateRightBytes(i64vec4 v1, i64vec4 v2, int offset) {
-    if (offset >= 24) {
-        v1 = i64vec4(v1.xyz, v2.x);
-        v2 = i64vec4(v2.yzw, 0);
-    } else if (offset >= 16) {
-        v1 = i64vec4(v1.xy, v2.xy);
-        v2 = i64vec4(v2.zw, 0, 0);
-    } else if (offset >= 8) {
-        v1 = i64vec4(v1.x, v2.xyz);
-        v2 = i64vec4(v2.w, 0, 0, 0);
-    }
-    return rotateRight(v1, v2, (offset%8)*8);
-}
-
-i64vec4 unalignedLoad(ptr_t i) {
-    int idx = i / 32;
-    return rotateLeftBytes(i64v4fromCPU[idx], i64v4fromCPU[idx+1], i % 32);
-}
-
-void unalignedStore(ptr_t i, i64vec4 v2) {
-    int idx = i / 32;
-    i64v4heap[idx] = rotateRightBytes(i64v4heap[idx], v2, i % 32);
-    i64v4heap[idx+1] = rotateRightBytes(v2, i64v4heap[idx+1], i % 32);
-}
-*/
-
-#define LZ4_GROUP_SIZE 4
-#define LZ4_STREAM_BLOCK_SIZE 8192
-
-void lz4DecompressBlockStreamFromCPUToHeap(int32_t blockIndex, int32_t blockSize, string cmp, string dst) {
-    if (blockIndex >= 128) return;
-
-    ptr_t i = cmp.x + 128 * 4;
-    int32_t len = 0;
-    for (int32_t b=0; b<=blockIndex && b<128; b++) {
-        len = i32fromCPU[cmp.x/4 + b];
-        if (b == blockIndex || len <= 0) break;
-        i += len;
-    }
-    if (len <= 0 || i >= cmp.y) {
-        return;
-    }
-    ptr_t outputStart = dst.x + blockSize * blockIndex;
-    int32_t subId = (ThreadLocalID % LZ4_GROUP_SIZE);
-    
-    for (ptr_t be=min(cmp.y, i+len), j=outputStart, dbe=min(dst.y, outputStart+blockSize); i<be && j<dbe;) {
-        uint8_t token = u8fromCPU[i++];
-        int32_t litLen = (int32_t(token) >> 4) & 0xf;
-        uint8_t c = uint8_t(litLen | (litLen << 4));
-        int32_t matchLen = int32_t(token) & 0xf;
-        while (c == 0xff) {
-            c = u8fromCPU[i++];
-            litLen += int32_t(c);
-        }
-        {
-            int32_t k = 0;
-            for (; k < litLen-(LZ4_GROUP_SIZE-1); k+=LZ4_GROUP_SIZE) u8heap[k+j+subId] = u8fromCPU[k+i+subId];
-            if (k < litLen && subId < litLen-k) u8heap[k+j+subId] = u8fromCPU[k+i+subId];
-            i += litLen;
-            j += litLen;
-        }
-
-        if (((j-outputStart) & 8191) == 0 && matchLen == 0) { // End of LZ4 block
-            continue;
-        }
-
-        int32_t matchOff = (int32_t(u8fromCPU[i  ]) << 0)
-                         | (int32_t(u8fromCPU[i+1]) << 8);
-        i += 2;
-        c = uint8_t(matchLen | (matchLen << 4));
-        matchLen += 4;
-        while (c == 0xff) {
-            c = u8fromCPU[i++];
-            matchLen += int32_t(c);
-        }
-        ptr_t m = j - matchOff;
-        {
-            int32_t k = 0;
-            int32_t maxSubSize = min(LZ4_GROUP_SIZE, matchOff);
-            if (subId < maxSubSize) {
-                for (; k < matchLen-(maxSubSize-1); k+=maxSubSize) u8heap[k+j+subId] = u8heap[k+m+subId];
-                if (k < matchLen && subId < matchLen-k) u8heap[k+j+subId] = u8heap[k+m+subId];
-            }
-            j += matchLen;
-        }
-    }
-}
-
 
 void main() {
 
     string pattern = aGet(argv, 1);
     string filename = aGet(argv, 2);
 
-    if (ThreadID == 0) programReturnValue = 1;
+    if (ThreadId == 0) programReturnValue = 1;
     controlBarrier(gl_ScopeDevice, gl_ScopeDevice, 0, 0);
 
     int32_t patternLength = strLen(pattern);
-    int32_t blockSize = HEAP_SIZE-(((patternLength+31) / 32) * 32);
-
-    ptr_t tgHeapStart = HEAP_SIZE * ThreadLocalCount * ThreadGroupID;
-
+    int32_t blockSize = HeapSize-(((patternLength+31) / 32) * 32);
+    ptr_t tgHeapStart = HeapSize * ThreadLocalCount * ThreadGroupId;
     int32_t wgBufSize = ThreadLocalCount * blockSize + patternLength;
 
-    if (ThreadLocalID == 0) {
+    if (ThreadLocalId == 0) {
         done = 0;
-        wgOff = int64_t(ThreadGroupID * ThreadLocalCount) * int64_t(blockSize);
+        wgOff = int64_t(ThreadGroupId * ThreadLocalCount) * int64_t(blockSize);
+        isCompressed = true;
     }
 
     bool found = false;
     char p = heap[pattern.x];
 
-    ptr_t hitStart = (tgHeapStart + decompressedSize + 3) / 4 * 4;
+    ptr_t hitStart = 0;
 
     while (done == 0) {
         FREE(FREE_IO(
             barrier(); memoryBarrier();
 
-            if (ThreadLocalID == 0) {
-                fromCPUPtr = tgHeapStart;
+            if (ThreadLocalId == 0) {
+                fromIOPtr = tgHeapStart;
+                toIOPtr = tgHeapStart;
 
-                io r = read(filename, wgOff, wgBufSize, string(tgHeapStart, tgHeapStart + (HEAP_SIZE * ThreadLocalCount)), IO_COMPRESS_LZ4_BLOCK_STREAM | LZ4_STREAM_BLOCK_SIZE);
-                wgBuf = awaitIO(r, true, decompressedSize);
+                io r = read(filename, wgOff, wgBufSize, string(tgHeapStart, tgHeapStart + (HeapSize * ThreadLocalCount)), IO_COMPRESS_LZ4_BLOCK_STREAM | LZ4_STREAM_BLOCK_SIZE | IO_COMPRESS_SPEED_7);
+                //io r = read(filename, wgOff, wgBufSize, string(tgHeapStart, tgHeapStart + (HeapSize * ThreadLocalCount)), IO_COMPRESS_LZ4);
+                wgBuf = awaitIO(r, false, decompressedSize, isCompressed);
 
-                /*
-                // Streaming IO, hm? 
-                // CPU reads a block of data, memcpys to GPU, increments GPU IO block counter.
-                // The GPU waits for blockCounter > currentBlock || ioDone, processes next block (decompress & search &c.)
-                // This is like the node.js block-oriented IO mechanism.
-                // Issuing IOs at block-level granularity wouldn't work so well because IO calls are quite heavy
-                // (send msg to CPU over PCIe, receive msg from GPU over PCIe, spin up thread, open file, seek, read to PCIe, close, exit thread, receive msg from CPU over PCIe)
-                // (Can be speeded up by moving to a 2-queue design ? (fromCPU, toCPU ioReqs))
-                // Anyway, compare to block IO: send to CPU, recv from GPU, spin up thread, open file, seek, loop { read to PCIe, recv from CPU } close, exit thread, recv from CPU)
-                //
-                // Currently
-                //
-                // CPU:      recv--thread--open--seek--readtoPCIe---------------------------close--writeCompletion
-                //          /                                                                                     \
-                // GPU: send                ....       wait      ....                                              receiveComplete--processData----------------------------------------------|
-                // 
-                //
-                // Block IO
-                //
-                // CPU:      recv--thread--open--seek--readBlock-readBlock-....-readBlock--close--writeCompletion
-                //          /                                   \          \             \                       \
-                // GPU: send      ....       wait      ....      process .. process .. .. process      ...        receiveComplete--processRest--|
-                // 
-                do {
-                    string block = awaitBlock(r, true, decompressedSize);
-                    decompressBlock(block);
-                    advanceSearch(block);
-                } while (strLen(block) > 0);
-                */
-                
+                if (!isCompressed) copyFromIOToHeap(wgBuf, string(tgHeapStart, tgHeapStart + strLen(wgBuf)));
+
                 if (decompressedSize != wgBufSize) {
-                    done = decompressedSize == 0 ? 2 : 1;
+                    done = (decompressedSize == 0) ? 2 : 1;
                 }
                 groupHeapPtr = tgHeapStart;
                 hitStart = groupHeapPtr;
@@ -233,36 +89,38 @@ void main() {
 
             if (done == 2) break;
 
-            for (int32_t i = 0; i < 128; i += ThreadLocalCount/LZ4_GROUP_SIZE) {
-                lz4DecompressBlockStreamFromCPUToHeap(i + ThreadLocalID/LZ4_GROUP_SIZE, LZ4_STREAM_BLOCK_SIZE, wgBuf, string(tgHeapStart, tgHeapStart + decompressedSize));
+            if (isCompressed) {
+                for (int32_t i = 0; i < 128; i += ThreadLocalCount/LZ4_GROUP_SIZE) {
+                    lz4DecompressBlockStreamFromCPUToHeap(i + ThreadLocalId/LZ4_GROUP_SIZE, LZ4_STREAM_BLOCK_SIZE, wgBuf, string(tgHeapStart, tgHeapStart + decompressedSize));
+                }
             }
-
-            if (ThreadLocalID == 0) {
+            
+            if (ThreadLocalId == 0) {
                 wgBuf = string(tgHeapStart, tgHeapStart + decompressedSize);
             }
             
             barrier(); memoryBarrier();
 
             string buf = string(
-                min(wgBuf.y, wgBuf.x + ThreadLocalID * blockSize),
-                min(wgBuf.y, wgBuf.x + (ThreadLocalID+1) * blockSize + patternLength)
+                min(wgBuf.y, wgBuf.x + ThreadLocalId * blockSize),
+                min(wgBuf.y, wgBuf.x + (ThreadLocalId+1) * blockSize + patternLength)
             );
 
-            bool blockFound = grepBuffer(blockSize, buf, pattern, p, ThreadLocalID * blockSize);
+            bool blockFound = grepBuffer(blockSize, buf, pattern, p, ThreadLocalId * blockSize);
             found = found || blockFound;
 
             barrier(); memoryBarrier();
 
-            if (ThreadLocalID == 0) {
-                fromCPUPtr = tgHeapStart;
-                toCPUPtr = tgHeapStart;
+            if (ThreadLocalId == 0) {
+                fromIOPtr = tgHeapStart;
+                toIOPtr = tgHeapStart;
                 ptr_t start = hitStart / 4;
                 ptr_t end = groupHeapPtr / 4;
                 
                 if (start != end) {
                     heapPtr = tgHeapStart;
                     for (int j = start; j < end; j++) {
-                        str(int64_t(i32fromCPU[j]) + wgOff);
+                        str(int64_t(i32fromIO[j]) + wgOff);
                         _w('\n');
                     }
                     print(string(tgHeapStart, heapPtr));

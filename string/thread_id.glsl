@@ -1,6 +1,6 @@
-int ThreadGroupCount = int(gl_NumWorkGroups.x);
-int ThreadLocalCount = int(gl_WorkGroupSize.x);
-int ThreadCount = ThreadGroupCount * ThreadLocalCount;
-int ThreadID = int(gl_GlobalInvocationID.x);
-int ThreadGroupID = int(gl_WorkGroupID.x);
-int ThreadLocalID = int(gl_LocalInvocationID.x);
+int32_t ThreadGroupCount = int(gl_NumWorkGroups.x);
+int32_t ThreadLocalCount = int(gl_WorkGroupSize.x);
+int32_t ThreadCount = ThreadGroupCount * ThreadLocalCount;
+int32_t ThreadId = int(gl_GlobalInvocationID.x);
+int32_t ThreadGroupId = int(gl_WorkGroupID.x);
+int32_t ThreadLocalId = int(gl_LocalInvocationID.x);

@@ -18,6 +18,7 @@
 #include <fcntl.h>
 #include <zstd.h>
 #include <lz4.h>
+#include <lz4frame.h>
 
 #include "io.hpp"
 
@@ -78,7 +79,7 @@ struct ioRequest {
     int32_t result_start;
     int32_t result_end;
     int32_t compression;
-    int32_t _pad11;
+    int32_t progress;
     int32_t _pad12;
     int32_t _pad13;
     int32_t _pad14;
@@ -181,6 +182,7 @@ class ComputeApplication
     const char *programFileName;
 
     uint32_t heapGlobalsOffset = 0;
+    uint32_t heapGlobalsSize = 0;
 
     volatile bool ioRunning = true;
     volatile bool ioReset = true;
@@ -201,6 +203,9 @@ class ComputeApplication
     int exitCode = 0;
     uint32_t workSize[3] = {1, 1, 1};
 
+    char *globals = NULL;
+    int32_t globalsLen = 0;
+
     void run(const char *fileName, int argc, char* argv[])
     {
 
@@ -219,19 +224,26 @@ class ComputeApplication
 
         threadCount = workSize[0] * workSize[1] * workSize[2] * localSize[0] * localSize[1] * localSize[2];
 
-        heapGlobalsOffset = heapSize * threadCount;
+        int argvLen = 0;
+        for (int i = 0; i < argc; i++) argvLen += strlen(argv[i]);
 
-        if (heapBufferSize == 0) heapBufferSize = heapSize * (threadCount + 1);
+        if (heapBufferSize == 0) heapBufferSize = heapSize * threadCount;
         if (toGPUBufferSize == 0) toGPUBufferSize = toGPUSize * threadCount;
         if (fromGPUBufferSize == 0) fromGPUBufferSize = fromGPUSize * threadCount;
         ioRequestsBufferSize = ioSize;
 
+        heapGlobalsOffset = heapBufferSize + 8;
+        heapGlobalsSize = globalsLen + 8 + 8*argc + argvLen;
+
+        heapBufferSize += heapGlobalsSize;
+        toGPUBufferSize = (toGPUBufferSize < heapGlobalsSize) ? heapGlobalsSize : toGPUBufferSize;
+
         size_t totalIOSize = toGPUBufferSize; // + fromGPUBufferSize;
-        if (verbose || timings) fprintf(stderr, "IO buffers: %zu\n", totalIOSize);
+        if (verbose) fprintf(stderr, "IO buffers: %zu\n", totalIOSize);
 
         assert(toGPUBufferSize <= 64*(1<<20));
 
-        // Initialize vulkan:
+        // Initialize vulkan
         createInstance();
 
         findPhysicalDevice();
@@ -269,13 +281,17 @@ class ComputeApplication
         int32_t *i32HeapBuf = (int32_t *)heapBuf;
 
         // Copy argv to the IO heap.
-        int32_t heapEnd = heapGlobalsOffset;
-        int32_t i32HeapEnd = heapGlobalsOffset / 4;
+        int32_t heapEnd = heapGlobalsOffset + globalsLen;
+        int32_t i32HeapEnd = heapEnd / 4;
         int32_t i32_ptr = 0;
-        i32HeapBuf[i32_ptr++] = i32HeapEnd + 2;            // start index of the argv array
-        i32HeapBuf[i32_ptr++] = i32HeapEnd + 2 + argc * 2; // end index of the argv array
-        int32_t heap_ptr = 4 * (2 + argc * 2);
-        int32_t heapPtr = heapEnd + heap_ptr;
+        i32HeapBuf[i32_ptr++] = i32HeapEnd;            // start index of the argv array
+        i32HeapBuf[i32_ptr++] = i32HeapEnd + argc * 2; // end index of the argv array
+        if (globals != NULL) {
+            memcpy(heapBuf + 8, globals, globalsLen);
+        }
+        int32_t heap_ptr = 8 + globalsLen + 8 * argc;
+        i32_ptr = 2 + (globalsLen/4);
+        int32_t heapPtr = heapEnd + 8 * argc;
         for (int i = 0; i < argc; i++) {
             int32_t len = strlen(argv[i]);
             i32HeapBuf[i32_ptr++] = heapPtr;          // start index of argv[i] on the heap
@@ -284,10 +300,6 @@ class ComputeApplication
             heap_ptr += len;
             heapPtr += len;
         }
-        // Better do this in the main compute shader invocation.
-        // First bufferCopy takes a millisecond, subsequent calls 40us...
-        //writeToGPU(toGPUMemory, 0, heap_ptr);
-        //bufferCopy(heapBuffer, heapGlobalsOffset, toGPUBuffer, 0, heap_ptr);
         timeIval("Write argv and globals to GPU");
 
         ioReqs->ioCount = 0;
@@ -791,6 +803,8 @@ class ComputeApplication
         return (uint32_t *)str;
     }
 
+#define TAG(v) (((v>>24) & 0xff) | ((v>>8) & 0xff00) | (((uint32_t)v<<8) & 0xff0000) | (((uint32_t)v << 24) & 0xff000000))
+
     void parseLocalSize(uint32_t *code) {
         //printf("%d\n", filelength);
         uint32_t len32 = filelength / 4;
@@ -804,18 +818,41 @@ class ComputeApplication
             uint32_t op = code[i];
             uint32_t wordCount = op >> 16;
             uint32_t opCode = op & 0xffff;
-            //printf("Op: %8x OpCode: %d WordCount:%d\n", op, opCode, wordCount);
+            #ifndef NDEBUG
+            fprintf(stderr, "Op: %8x OpCode: %d WordCount:%d\n", op, opCode, wordCount);
+            #endif
             int j = i+1;
             if (opCode == 16) { // OpExecutionMode
                 uint32_t entryPoint = code[j++];
                 uint32_t mode = code[j++];
-                //printf("EntryPoint: %d Mode: %d\n", entryPoint, mode);
+                if (verbose) fprintf(stderr, "EntryPoint: %d Mode: %d\n", entryPoint, mode);
                 if (mode == 17) { // LocalSize
                     localSize[0] = code[j++];
                     localSize[1] = code[j++];
                     localSize[2] = code[j++];
-                    //printf("LocalSize: %d %d %d\n", localSize[0], localSize[1], localSize[2]);
+                    if (verbose) fprintf(stderr, "LocalSize: %d %d %d\n", localSize[0], localSize[1], localSize[2]);
                 }
+            }
+            if (opCode == 4) { // OpSourceExtension
+                int j = i + 1;
+                uint32_t tag = code[j++];
+                if (verbose) fprintf(stderr, "OpSourceExtension tag %.4s %d\n", (char*)(&tag), code[j]);
+                if (tag == TAG('glo=')) {
+                    const uint32_t len = 4 * (wordCount - 2);
+                    globalsLen += len;
+                    if (globals != NULL) globals = (char*)realloc(globals, globalsLen+1);
+                    else globals = (char *)malloc(globalsLen+1);
+                    memcpy(globals + (globalsLen-len), code + j, len);
+                    globals[globalsLen] = 0;
+                    if (verbose) fprintf(stderr, "globals[%d]: %s\n", globalsLen, globals);
+                }
+                else if (tag == TAG('tgc=')) workSize[0] = code[j++];
+                else if (tag == TAG('hsz=')) heapSize = code[j++];
+                else if (tag == TAG('ths=')) heapBufferSize = code[j++];
+                else if (tag == TAG('tis=')) fromGPUSize = code[j++];
+                else if (tag == TAG('fis=')) toGPUSize = code[j++];
+                else if (tag == TAG('tti=')) fromGPUBufferSize = code[j++];
+                else if (tag == TAG('tfi=')) toGPUBufferSize = code[j++];
             }
             i += wordCount > 0 ? wordCount-1 : 0;
         }
@@ -828,38 +865,6 @@ class ComputeApplication
 
     void createComputePipeline()
     {
-
-        char* cache_data = nullptr;
-        size_t cache_data_length = 0;
-
-/*
-        FILE* rf = fopen("cache", "r");
-        if (rf != NULL) {
-            fseek(rf, 0, SEEK_END);
-            cache_data_length = ftell(rf);
-            fseek(rf, 0, SEEK_SET);
-//            printf("%zu\n", cache_data_length);
-            cache_data = new char[cache_data_length];
-            size_t datalen = fread(cache_data, 1, cache_data_length, rf);
-//            printf("%zu\n", datalen);
-            fclose(rf);
-        }
-*/
-        VkPipelineCache pipeline_cache;
-        VkPipelineCacheCreateInfo pipeline_cache_create_info = {
-            VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO,
-            nullptr,
-            0,
-            cache_data_length,
-            cache_data
-        };
-        VK_CHECK_RESULT(vkCreatePipelineCache(device, &pipeline_cache_create_info, nullptr, &pipeline_cache));
-        if (cache_data_length > 0) {
-            delete[] cache_data;
-        }
-
-        timeIval("vkCreatePipelineCache");
-
 
         /*
         We create a compute pipeline here.
@@ -914,27 +919,9 @@ class ComputeApplication
         Now, we finally create the compute pipeline.
         */
         VK_CHECK_RESULT(
-            vkCreateComputePipelines(device, pipeline_cache, 1, &pipelineCreateInfo, NULL, &pipeline));
+            vkCreateComputePipelines(device, NULL, 1, &pipelineCreateInfo, NULL, &pipeline));
 
         timeIval("vkCreateComputePipelines");
-
-/*
-        if (cache_data_length == 0) {
-            size_t data_size = 0;
-            VK_CHECK_RESULT(vkGetPipelineCacheData(device, pipeline_cache, &data_size, nullptr));
-
-            char *pipeline_cache_data = new char[data_size];
-            VK_CHECK_RESULT(vkGetPipelineCacheData(device, pipeline_cache, &data_size, pipeline_cache_data));
-
-            FILE* f = fopen("cache", "w");
-            fwrite(pipeline_cache_data, 1, data_size, f);
-            fclose(f);
-            delete[] pipeline_cache_data;
-
-            timeIval("vkGetPipelineCacheData");
-        }
-*/
-
     }
 
     void initCommandBuffer(uint32_t queueFamilyIndex, VkCommandPool *commandPool, VkCommandBuffer *commandBuffer)
@@ -961,7 +948,7 @@ class ComputeApplication
         VkCommandBufferBeginInfo beginInfo = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, .flags = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT};
         VK_CHECK_RESULT(vkBeginCommandBuffer(commandBuffer, &beginInfo));
 
-            VkBufferCopy copyRegion{ .srcOffset = 0, .dstOffset = heapGlobalsOffset, .size = heapSize };
+            VkBufferCopy copyRegion{ .srcOffset = 0, .dstOffset = heapGlobalsOffset-8, .size = heapGlobalsSize };
             vkCmdCopyBuffer(commandBuffer, toGPUBuffer, heapBuffer, 1, &copyRegion);
 
             /*
@@ -1060,9 +1047,11 @@ class ComputeApplication
     }
 
     static void handleIORequest(ComputeApplication *app, bool verbose, ioRequests *ioReqs, char *toGPUBuf, char *fromGPUBuf, int i, volatile bool *completed, int threadIdx, std::map<int, FILE*> *fileCache) {
-        while (((volatile ioRequest*)(ioReqs->requests))[i].status != IO_START) {
+        volatile ioRequest *volatileReqs = ((volatile ioRequest*)(ioReqs->requests));
+        while (volatileReqs[i].status != IO_START) {
             std::this_thread::sleep_for(std::chrono::microseconds(10));
         }
+        volatileReqs[i].status = IO_IN_PROGRESS;
         ioRequest req = ioReqs->requests[i];
         if (verbose) fprintf(stderr, "IO req %d: t:%d s:%d off:%ld count:%ld fn_start:%d fn_end:%d res_start:%d res_end:%d\n", i, req.ioType, req.status, req.offset, req.count, req.filename_start, req.filename_end, req.result_start, req.result_end);
 
@@ -1082,7 +1071,7 @@ class ComputeApplication
             }
         } else {
             VkDeviceSize filenameLength = req.filename_end - req.filename_start;
-            if (verbose) printf("Filename length %lu\n", filenameLength);
+            if (verbose) fprintf(stderr, "Filename length %lu\n", filenameLength);
             filename = (char*)calloc(filenameLength + 1, 1);
             app->readFromGPUIO(req.filename_start, filenameLength);
             memcpy(filename, fromGPUBuf + req.filename_start, filenameLength);
@@ -1091,17 +1080,27 @@ class ComputeApplication
 
         // Process IO command
         if (req.ioType == IO_READ) {
-            if (verbose) printf("Read %s\n", filename);
+            if (verbose) fprintf(stderr, "Read %s\n", filename);
             auto fd = openFile(filename, file, "rb");
             fseek(fd, req.offset, SEEK_SET);
 
             int32_t bytes = 0;
             int64_t totalRead = 0;
 
-            int32_t compressionType = req.compression & 0xff000000;
-            int32_t compressionData = req.compression & 0x00ffffff;
+            const int32_t compressionType = req.compression & 0xff000000;
+            const int32_t compressionData = req.compression & 0x00ffffff;
+            const int32_t blockSize = compressionData & 0x000fffff;
+            int32_t compressionSpeed = ((compressionData & 0x00f00000) >> 20) - 1;
+            bool autoCompress = compressionSpeed == -1;
+            if (compressionSpeed == -1) compressionSpeed = 7;
+
+            if (verbose) fprintf(stderr, "Compression: %08x, type: %d, speed: %d, blockSize: %d\n", req.compression, compressionType, compressionSpeed, blockSize);
+
+            bool doUncompressedRead = true;
 
             if (compressionType != 0) {
+
+                doUncompressedRead = false;
 
                 if (compressionType == IO_COMPRESS_ZSTD) {
                     size_t const buffInSize = ZSTD_CStreamInSize();
@@ -1109,8 +1108,13 @@ class ComputeApplication
                     size_t const buffOutSize = ZSTD_CStreamOutSize();
                     void*  const buffOut = malloc(buffOutSize);
 
+                    int minLevel = ZSTD_minCLevel();
+                    int maxLevel = ZSTD_maxCLevel();
+                    float speedRatio = sqrt(compressionSpeed/9.0);
+                    int level = round(maxLevel * (1-speedRatio) + minLevel * speedRatio);
+
                     ZSTD_CCtx* const cctx = ZSTD_createCCtx();
-                    ZSTD_CCtx_setParameter(cctx, ZSTD_c_compressionLevel, -9);
+                    ZSTD_CCtx_setParameter(cctx, ZSTD_c_compressionLevel, level);
                     ZSTD_CCtx_setParameter(cctx, ZSTD_c_strategy, ZSTD_fast);
 
                     size_t readCount = req.count;
@@ -1129,10 +1133,11 @@ class ComputeApplication
                             memcpy(toGPUBuf + req.result_start + bytes, buffOut, output.pos);
                             bytes += output.pos;
                             finished = lastChunk ? (remaining == 0) : (input.pos == input.size);
+                            volatileReqs[i].progress = bytes;
                         } while (!finished);
                         if (lastChunk) break;
                     }
-                    //printf("Wrote %ld => %d bytes\n", req.count, bytes);
+                    if (verbose) fprintf(stderr, "Wrote %ld => %d bytes\n", req.count, bytes);
 
                     ZSTD_freeCCtx(cctx);
                     free(buffIn);
@@ -1147,16 +1152,15 @@ class ComputeApplication
 
                     const int64_t BLOCK_BYTES = 8192;
 
-                    char inpBuf[2][BLOCK_BYTES];
-                    char cmpBuf[LZ4_COMPRESSBOUND(BLOCK_BYTES)];
-                    int64_t  inpBufIndex = 0;
+                    char inpBuf[2][BLOCK_BYTES + 8];
+                    char cmpBuf[LZ4_COMPRESSBOUND(BLOCK_BYTES) + 8];
+                    int64_t inpBufIndex = 0;
 
                     LZ4_initStream(lz4Stream, sizeof (*lz4Stream));
 
                     int64_t readCount = req.count;
-                    if (compressionType == IO_COMPRESS_LZ4_BLOCK_STREAM) {
 
-                        const int32_t blockSize = compressionData;
+                    if (compressionType == IO_COMPRESS_LZ4_BLOCK_STREAM) { // LZ4_BLOCK_STREAM
 
                         int32_t blockOff = 0;
                         int32_t blockBytes = 0;
@@ -1168,60 +1172,194 @@ class ComputeApplication
                             *(int32_t*)(toGPUBuf + req.result_start + i*4) = 0;
                         }
 
+                        if (verbose) fprintf(stderr, "Compression frame size: %d, internal block size: %ld\n", blockSize, BLOCK_BYTES);
+                        if (verbose) fprintf(stderr, "Compression speed: %d\n", compressionSpeed);
+
                         while (true) {
                             char* const inpPtr = inpBuf[inpBufIndex];
                             const int64_t inpBytes = (int) fread(inpPtr, 1, std::min(BLOCK_BYTES, (readCount - totalRead)), fd);
                             totalRead += inpBytes;
                             if (0 == inpBytes) break;
-                            const int64_t cmpBytes = LZ4_compress_fast_continue(lz4Stream, inpPtr, cmpBuf, inpBytes, sizeof(cmpBuf), 9);
+                            const int64_t cmpBytes = LZ4_compress_fast_continue(lz4Stream, inpPtr, cmpBuf, inpBytes, sizeof(cmpBuf), compressionSpeed);
                             if (cmpBytes <= 0) break;
-                            if (verbose) printf("Write offset %d len %ld: first word %d %d %d %d\n", bytes, cmpBytes, cmpBuf[0], cmpBuf[1], cmpBuf[2], cmpBuf[3]);
                             memcpy(toGPUBuf + req.result_start + bytes, cmpBuf, cmpBytes);
                             bytes += cmpBytes;
                             blockBytes += cmpBytes;
                             if ((totalRead & (blockSize-1)) == 0) {
+                                if (autoCompress) {
+                                    float compressionRatio = (float)cmpBytes/inpBytes;
+                                    bytes += ((volatile int32_t*)(toGPUBuf + req.result_start))[0]; // Try flushing
+                                    if (blockOff == 0) {
+                                        if (compressionRatio > 0.7) {
+                                            // Do uncompressed read
+                                            volatileReqs[i].compression = 0;
+                                            volatileReqs[i].progress = 0;
+                                            fseek(fd, req.offset, SEEK_SET);
+                                            bytes = 0;
+                                            doUncompressedRead = true;
+                                            break;
+                                        } else if (compressionRatio < 0.3) {
+                                            // Use stronger compression
+                                            compressionSpeed = 3;
+                                        } else {
+                                            // Use faster compression
+                                            compressionSpeed = 7;
+                                        }
+                                    }
+                                }
                                 *(uint32_t*)(toGPUBuf + req.result_start + blockOff) = blockBytes;
-                                if (verbose) printf("%d\n", blockBytes);
+                                if (verbose) fprintf(stderr, "%d\n", blockBytes);
                                 blockBytes = 0;
                                 blockOff += 4;
-                                *(int32_t*)(toGPUBuf + req.result_start + blockOff) = 0;
+                                volatileReqs[i].progress = bytes;
                                 LZ4_resetStream_fast(lz4Stream);
                             }
                             inpBufIndex = (inpBufIndex + 1) % 2;
                         }
-                        *(int32_t*)(toGPUBuf + req.result_start + blockOff) = blockBytes;
-                        if (verbose && blockBytes > 0) printf("[%d] = %d\n", req.result_start + blockOff, blockBytes);
-                    } else {
+                        if (!doUncompressedRead) *(int32_t*)(toGPUBuf + req.result_start + blockOff) = blockBytes;
+                        if (verbose && blockBytes > 0) fprintf(stderr, "[%d] = %d\n", req.result_start + blockOff, blockBytes);
+
+
+                    } else { // LZ4_BlOCK
                         while (true) {
                             char* const inpPtr = inpBuf[inpBufIndex];
                             const int inpBytes = (int) fread(inpPtr, 1, std::min(BLOCK_BYTES, (readCount - totalRead)), fd);
                             totalRead += inpBytes;
                             if (0 == inpBytes) break;
-                            const int cmpBytes = LZ4_compress_fast_continue(lz4Stream, inpPtr, cmpBuf, inpBytes, sizeof(cmpBuf), 9);
+                            const int cmpBytes = LZ4_compress_fast_continue(lz4Stream, inpPtr, cmpBuf, inpBytes, sizeof(cmpBuf), compressionSpeed);
                             if (cmpBytes <= 0) break;
                             memcpy(toGPUBuf + req.result_start + bytes, cmpBuf, cmpBytes);
                             bytes += cmpBytes;
+                            volatileReqs[i].progress = bytes;
                             inpBufIndex = (inpBufIndex + 1) % 2;
                         }
                     }
-                    if (verbose && totalRead > 0) printf("Compression ratio: %.4f\n", (float)bytes/totalRead);
+                    if (verbose && totalRead > 0) fprintf(stderr, "Compression ratio: %.4f\n", (float)bytes/totalRead);
                     req.status = IO_COMPLETE;
-                } else if (compressionType == IO_COMPRESS_LZ4) { // Framed LZ4 stream
-                    req.status = IO_ERROR; // Not implemented
+
+
+                } else if (compressionType == IO_COMPRESS_LZ4) { // LZ4_FRAME_STREAM
+
+                    if (verbose) fprintf(stderr, "IO_COMPRESS_LZ4\n");
+
+                    const size_t inChunkSize = 65536;
+
+                    const LZ4F_preferences_t kPrefs = {
+                        { LZ4F_max256KB, LZ4F_blockLinked, LZ4F_noContentChecksum, LZ4F_frame,
+                          0 /* unknown content size */, 0 /* no dictID */ , LZ4F_noBlockChecksum },
+                        -3,   /* compression level; 0 == default */
+                        0,   /* autoflush */
+                        1,   /* favor decompression speed */
+                        { 0, 0, 0 },  /* reserved, must be set to 0 */
+                    };
+
+                    LZ4F_compressionContext_t ctx;
+                    size_t const ctxCreation = LZ4F_createCompressionContext(&ctx, LZ4F_VERSION);
+                    void* const inBuff = malloc(inChunkSize);
+                    size_t const outCapacity = LZ4F_compressBound(inChunkSize, &kPrefs);
+                    void* const outBuff = malloc(outCapacity);
+
+                    if (!LZ4F_isError(ctxCreation) && inBuff && outBuff) {
+                        uint64_t count_in = 0, count_out = 0;
+
+                        assert(ctx != NULL);
+                        assert(outCapacity >= LZ4F_HEADER_SIZE_MAX);
+                        assert(outCapacity >= LZ4F_compressBound(inChunkSize, &kPrefs));
+
+                        /* write frame header */
+                        {   size_t const headerSize = LZ4F_compressBegin(ctx, outBuff, outCapacity, &kPrefs);
+                            if (LZ4F_isError(headerSize)) {
+                                fprintf(stderr, "Error: LZ4F Failed to start compression: error %u \n", (unsigned)headerSize);
+                                exit(1);
+                            }
+                            memcpy(toGPUBuf + req.result_start + count_out, outBuff, headerSize);
+                            count_out = headerSize;
+                            volatileReqs[i].progress = count_out;
+                            if (verbose) fprintf(stderr, "Buffer size is %u bytes, header size %u bytes \n",
+                                    (unsigned)outCapacity, (unsigned)headerSize);
+                        }
+
+                        /* stream file */
+                        for (;;) {
+                            size_t const readSize = fread(inBuff, 1, std::min(inChunkSize, (req.count - count_in)), fd);
+                            if (readSize == 0) break; /* nothing left to read from input file */
+                            count_in += readSize;
+
+                            size_t const compressedSize = LZ4F_compressUpdate(ctx,
+                                                                    outBuff, outCapacity,
+                                                                    inBuff, readSize,
+                                                                    NULL);
+                            if (LZ4F_isError(compressedSize)) {
+                                fprintf(stderr, "Error: LZ4F Compression failed: error %u \n", (unsigned)compressedSize);
+                                exit(1);
+                            }
+
+                            if (verbose) fprintf(stderr, "Writing %u bytes\n", (unsigned)compressedSize);
+                            memcpy(toGPUBuf + req.result_start + count_out, outBuff, compressedSize);
+                            count_out += compressedSize;
+                            volatileReqs[i].progress = count_out;
+                        }
+
+                        /* flush whatever remains within internal buffers */
+                        {   size_t const compressedSize = LZ4F_compressEnd(ctx,
+                                                                    outBuff, outCapacity,
+                                                                    NULL);
+                            if (LZ4F_isError(compressedSize)) {
+                                fprintf(stderr, "Error: LZ4F Failed to end compression: error %u\n", (unsigned)compressedSize);
+                                exit(1);
+                            }
+
+                            if (verbose) fprintf(stderr, "Writing %u bytes \n", (unsigned)compressedSize);
+                            memcpy(toGPUBuf + req.result_start + count_out, outBuff, compressedSize);
+                            count_out += compressedSize;
+                            volatileReqs[i].progress = count_out;
+                        }
+
+                        bytes = count_out;
+                        totalRead = count_in;
+                        req.status = IO_COMPLETE;
+
+                    } else {
+                        req.status = IO_ERROR;
+                        fprintf(stderr, "Error: LZ4F resource allocation failed\n");
+                        exit(1);
+                    }
+
+                    free(outBuff);
+                    free(inBuff);
+                    LZ4F_freeCompressionContext(ctx);   /* supports free on NULL */
+
                 } else { // Unknown compression type
                     req.status = IO_ERROR;
                 }
 
-            } else { // Uncompressed read.
-
-                bytes = fread(toGPUBuf + req.result_start, 1, req.count, fd);
-                totalRead = bytes;
-                req.status = IO_COMPLETE;
             }
-            readahead(fileno(fd), 0, 100000000000L);
+
+            if (doUncompressedRead) { // Uncompressed read.
+
+                int64_t count = req.count;
+                bytes = 0;
+                while (bytes < req.count) {
+                    int32_t readBytes = fread(toGPUBuf + req.result_start + bytes, 1, std::min(req.count-bytes, 65536L), fd);
+                    bytes += readBytes;
+                    volatileReqs[i].progress = bytes;
+                    if (readBytes == 0) break;
+                }
+                totalRead = (int64_t)bytes;
+                req.status = IO_COMPLETE;
+                if (verbose) fprintf(stderr, "Read %d = %ld bytes to GPU\n", bytes, totalRead);
+                //if (verbose) fwrite(toGPUBuf + req.result_start, 1, bytes, stderr);
+            }
+
+            if (file == NULL) { // Request reading file to page cache
+                fseek(fd, 0, SEEK_END);
+                readahead(fileno(fd), 0, ftell(fd));
+            }
             if (file == NULL) closeFile(fd);
-            ioReqs->requests[i].count = totalRead;
-            ioReqs->requests[i].result_end = req.result_start + bytes;
+
+            volatileReqs[i].count = totalRead;
+            volatileReqs[i].result_end = req.result_start + bytes;
+            if (verbose) fprintf(stderr, "Sent count %ld = %ld to GPU\n", totalRead, volatileReqs[i].count);
 
         } else if (req.ioType == IO_WRITE) {
             auto fd = openFile(filename, file, "rb+");
@@ -1233,7 +1371,7 @@ class ComputeApplication
             }
             int32_t bytes = fwrite(fromGPUBuf + req.result_start, 1, req.count, fd);
             if (file == NULL) closeFile(fd);
-            ioReqs->requests[i].result_end = req.result_start + bytes;
+            volatileReqs[i].result_end = req.result_start + bytes;
             req.status = IO_COMPLETE;
 
         } else if (req.ioType == IO_CREATE) {
@@ -1242,7 +1380,7 @@ class ComputeApplication
             app->readFromGPUIO(req.result_start, req.count);
             int32_t bytes = fwrite(fromGPUBuf + req.result_start, 1, req.count, fd);
             if (file == NULL) closeFile(fd);
-            ioReqs->requests[i].result_end = req.result_start + bytes;
+            volatileReqs[i].result_end = req.result_start + bytes;
             req.status = IO_COMPLETE;
 
         } else if (req.ioType == IO_DELETE) {
@@ -1263,14 +1401,14 @@ class ComputeApplication
             // Send the received data back
             app->readFromGPUIO(req.result_start, req.count);
             memcpy(toGPUBuf + req.result_start, fromGPUBuf + req.offset, req.count);
-            ioReqs->requests[i].result_end = req.result_start + req.count;
+            volatileReqs[i].result_end = req.result_start + req.count;
             req.status = IO_COMPLETE;
 
         } else if (req.ioType == IO_RUN_CMD) {
             // Run command and copy the results to req.data
             int result = system(filename);
-            ioReqs->requests[i].result_start = result;
-            ioReqs->requests[i].result_end = 0;
+            volatileReqs[i].result_start = result;
+            volatileReqs[i].result_end = 0;
             req.status = IO_COMPLETE;
 
         } else if (req.ioType == IO_MOVE) {
@@ -1280,8 +1418,8 @@ class ComputeApplication
             memcpy(dst, fromGPUBuf + req.result_start, req.count);
             dst[req.count] = 0;
             int result = rename(filename, dst);
-            ioReqs->requests[i].result_start = result;
-            ioReqs->requests[i].result_end = 0;
+            volatileReqs[i].result_start = result;
+            volatileReqs[i].result_end = 0;
             req.status = IO_COMPLETE;
 
         } else if (req.ioType == IO_COPY) {
@@ -1292,8 +1430,8 @@ class ComputeApplication
             dst[req.count] = 0;
             std::error_code ec;
             std::filesystem::copy(filename, dst, ec);
-            ioReqs->requests[i].result_start = ec.value();
-            ioReqs->requests[i].result_end = 0;
+            volatileReqs[i].result_start = ec.value();
+            volatileReqs[i].result_end = 0;
             req.status = IO_COMPLETE;
 
         } else if (req.ioType == IO_COPY_RANGE) {
@@ -1303,22 +1441,22 @@ class ComputeApplication
         } else if (req.ioType == IO_CD) {
             // Change directory
             int result = chdir(filename);
-            ioReqs->requests[i].result_start = result;
-            ioReqs->requests[i].result_end = 0;
+            volatileReqs[i].result_start = result;
+            volatileReqs[i].result_end = 0;
             req.status = IO_COMPLETE;
 
         } else if (req.ioType == IO_MKDIR) {
             // Make dir at filename
             int result = mkdir(filename, 0755);
-            ioReqs->requests[i].result_start = result;
-            ioReqs->requests[i].result_end = 0;
+            volatileReqs[i].result_start = result;
+            volatileReqs[i].result_end = 0;
             req.status = IO_COMPLETE;
 
         } else if (req.ioType == IO_RMDIR) {
             // Remove dir at filename
             int result = rmdir(filename);
-            ioReqs->requests[i].result_start = result;
-            ioReqs->requests[i].result_end = 0;
+            volatileReqs[i].result_start = result;
+            volatileReqs[i].result_end = 0;
             req.status = IO_COMPLETE;
 
         } else if (req.ioType == IO_GETCWD) {
@@ -1328,14 +1466,14 @@ class ComputeApplication
             printf("getcwd: %s\n", s);
             memcpy(toGPUBuf + req.result_start, s, len);
             free(s);
-            ioReqs->requests[i].result_end = req.result_start + len;
+            volatileReqs[i].result_end = req.result_start + len;
             req.status = IO_COMPLETE;
 
         } else if (req.ioType == IO_OPEN) {
             // Open file
             FILE* fd = fopen(filename, req.offset == 0 ? "rb" : (req.offset == 1 ? "rb+" : (req.offset == 2 ? "rw" : "ra")));
             *(int32_t*)(toGPUBuf + req.result_start) = fileno(fd);
-            ioReqs->requests[i].result_end = req.result_start + 4;
+            volatileReqs[i].result_end = req.result_start + 4;
             std::lock_guard<std::mutex> guard(fileCache_mutex);
             fileCache->emplace(fileno(fd), fd);
             req.status = IO_COMPLETE;
@@ -1369,9 +1507,9 @@ class ComputeApplication
                 }
                 offset++;
             }
-            ioReqs->requests[i].offset = offset;
-            ioReqs->requests[i].count = entryCount;
-            ioReqs->requests[i].result_end = req.result_start + count;
+            volatileReqs[i].offset = offset;
+            volatileReqs[i].count = entryCount;
+            volatileReqs[i].result_end = req.result_start + count;
             req.status = IO_COMPLETE;
 
         } else if (req.ioType == IO_STAT) {
@@ -1383,14 +1521,14 @@ class ComputeApplication
             } else {
                 ok = stat(filename, &s);
             }
-            ioReqs->requests[i].offset = errno;
+            volatileReqs[i].offset = errno;
             errno = 0;
-            if (ok == 0) ioReqs->requests[i].count = s.st_size;
+            if (ok == 0) volatileReqs[i].count = s.st_size;
             if (ok == 0 && req.count >= sizeof(s)) {
                 memcpy(toGPUBuf + req.result_start, &s, sizeof(s));
-                ioReqs->requests[i].result_end = req.result_start + sizeof(s);
+                volatileReqs[i].result_end = req.result_start + sizeof(s);
             } else {
-                ioReqs->requests[i].result_end = 0;
+                volatileReqs[i].result_end = 0;
             }
             req.status = IO_COMPLETE;
 
@@ -1420,8 +1558,8 @@ class ComputeApplication
             // Chdir to given dir and make it root
             int result = chdir(filename);
             if (result == 0) result = chroot(".");
-            ioReqs->requests[i].result_start = result;
-            ioReqs->requests[i].result_end = 0;
+            volatileReqs[i].result_start = result;
+            volatileReqs[i].result_end = 0;
             req.status = IO_COMPLETE;
 
         } else if (req.ioType == IO_EXIT) {
@@ -1432,8 +1570,8 @@ class ComputeApplication
             req.status = IO_ERROR;
 
         }
-        ioReqs->requests[i].status = req.status;
-        if (verbose) printf("IO completed: %d - status %d\n", i, ioReqs->requests[i].status);
+        volatileReqs[i].status = req.status;
+        if (verbose) fprintf(stderr, "IO completed: %d - status %d\n", i, volatileReqs[i].status);
 
         if (threadIdx >= 0) {
             std::lock_guard<std::mutex> guard(completed_mutex);
@@ -1443,15 +1581,16 @@ class ComputeApplication
 
     static void handleIORequests(ComputeApplication *app, bool verbose, ioRequests *ioReqs, char *toGPUBuf, char *fromGPUBuf, volatile bool *ioRunning, volatile bool *ioReset) {
 
-        int threadCount = 48;
+        int threadCount = 64;
         std::thread threads[threadCount];
         int threadIdx = 0;
         volatile bool *completed = (volatile bool*)malloc(sizeof(bool) * threadCount);
+        auto volatileReqs = ((volatile ioRequest*)(ioReqs->requests));
 
         std::map<int, FILE*> fileCache{};
 
         int32_t lastReqNum = 0;
-        if (verbose) printf("IO Running\n");
+        if (verbose) fprintf(stderr, "IO Running\n");
         while (*ioRunning) {
             if (*ioReset) {
                 while (threadIdx > 0) threads[--threadIdx].join();
@@ -1460,11 +1599,11 @@ class ComputeApplication
                 ioReqs->ioCount = 0;
                 *ioReset = false;
             }
-            int32_t reqNum = ioReqs->ioCount % IO_REQUEST_COUNT;
+            int32_t reqNum = ((volatile ioRequests*)ioReqs)->ioCount % IO_REQUEST_COUNT;
             if (reqNum < lastReqNum) {
                 for (int32_t i = lastReqNum; i < IO_REQUEST_COUNT; i++) {
-                    if (verbose) printf("Got IO request %d\n", i);
-                    if (ioReqs->requests[i].ioType == IO_READ) {
+                    if (verbose) fprintf(stderr, "Got IO request %d\n", i);
+                    if (volatileReqs[i].ioType == IO_READ) {
                         int tidx = threadIdx;
                         if (tidx == threadCount) {
                             // Find completed thread.
@@ -1492,8 +1631,8 @@ class ComputeApplication
                 lastReqNum = 0;
             }
             for (int32_t i = lastReqNum; i < reqNum; i++) {
-                if (verbose) printf("Got IO request %d\n", i);
-                if (ioReqs->requests[i].ioType == IO_READ) {
+                if (verbose) fprintf(stderr, "Got IO request %d\n", i);
+                if (volatileReqs[i].ioType == IO_READ) {
                     int tidx = threadIdx;
                     if (tidx == threadCount) {
                         // Find completed thread.
@@ -1524,7 +1663,7 @@ class ComputeApplication
         }
         while (threadIdx > 0) threads[--threadIdx].join();
         for (int i=0; i < threadCount; i++) completed[i] = false;
-        if (verbose) printf("Exited IO thread\n");
+        if (verbose) fprintf(stderr, "Exited IO thread\n");
     }
 
 };

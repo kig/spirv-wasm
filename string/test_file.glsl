@@ -1,11 +1,12 @@
+#!/usr/bin/env gls
 
 #include "file.glsl"
 
-layout ( local_size_x = 4, local_size_y = 1, local_size_z = 1 ) in;
+ThreadLocalCount = 4;
+ThreadGroupCount = 4;
 
 #define rg(i,n) for (int i=0,_l_=(n); i<_l_; i++)
 #define mapIO(i, n, f) { io _ios_[n]; rg(i, n) _ios_[i] = f; rg(i, n) awaitIO(_ios_[i]); }
-
 
 bool testRead() {
     string r1 = readSync("hello.txt", malloc(100));
@@ -106,8 +107,6 @@ void printTest(bool ok, string name) {
 #define TEST(testFn) FREE(FREE_IO(printTest(testFn(), #testFn)))
 
 void main() {
-    initGlobals();
-
     TEST(testRead);
     TEST(testWrite);
     TEST(testRunCmd);

@@ -1,13 +1,4 @@
 #include "string.glsl"
-
-#ifndef TO_CPU_SIZE
-#define TO_CPU_SIZE 4096
-#endif
-
-#ifndef FROM_CPU_SIZE
-#define FROM_CPU_SIZE 4096
-#endif
-
 #include "vulkan/io.hpp"
 
 struct ioRequest {
@@ -18,7 +9,7 @@ struct ioRequest {
     i32vec2 filename;
     i32vec2 data;
     int32_t compression;
-    int32_t _pad11;
+    int32_t progress;
     int32_t _pad12;
     int32_t _pad13;
     int32_t _pad14;
@@ -46,19 +37,19 @@ layout(std430, binding = 1) volatile buffer ioRequestsBuffer {
     ioRequest ioRequests[]; 
 };
 
-layout(std430, binding = 2) volatile buffer fromCPUBuffer { char fromCPU[]; };
-layout(std430, binding = 2) volatile buffer u8fromCPUBuffer { uint8_t u8fromCPU[]; };
-layout(std430, binding = 2) volatile buffer i16fromCPUBuffer { int16_t i16fromCPU[]; }; // 2 bytes
-layout(std430, binding = 2) volatile buffer i32fromCPUBuffer { int32_t i32fromCPU[]; }; // 4 bytes
-layout(std430, binding = 2) volatile buffer i64fromCPUBuffer { int64_t i64fromCPU[]; }; // 8 bytes
-layout(std430, binding = 2) volatile buffer i64v2fromCPUBuffer { i64vec2 i64v2fromCPU[]; }; // 16 bytes
-layout(std430, binding = 2) volatile buffer i64v4fromCPUBuffer { i64vec4 i64v4fromCPU[]; }; // 32 bytes
-layout(std430, binding = 2) volatile buffer f64m42fromCPUBuffer { f64mat4x2 f64m42fromCPU[]; }; // 64 bytes
-layout(std430, binding = 2) volatile buffer f64m4fromCPUBuffer { f64mat4 f64m4fromCPU[]; }; // 128 bytes
-layout(std430, binding = 3) buffer toCPUBuffer { char toCPU[]; };
-layout(std430, binding = 3) buffer i64v4toCPUBuffer { i64vec4 i64v4toCPU[]; };
+layout(std430, binding = 2) volatile buffer fromIOBuffer { char fromIO[]; };
+layout(std430, binding = 2) volatile buffer u8fromIOBuffer { uint8_t u8fromIO[]; };
+layout(std430, binding = 2) volatile buffer i16fromIOBuffer { int16_t i16fromIO[]; }; // 2 bytes
+layout(std430, binding = 2) volatile buffer i32fromIOBuffer { int32_t i32fromIO[]; }; // 4 bytes
+layout(std430, binding = 2) volatile buffer i64fromIOBuffer { int64_t i64fromIO[]; }; // 8 bytes
+layout(std430, binding = 2) volatile buffer i64v2fromIOBuffer { i64vec2 i64v2fromIO[]; }; // 16 bytes
+layout(std430, binding = 2) volatile buffer i64v4fromIOBuffer { i64vec4 i64v4fromIO[]; }; // 32 bytes
+layout(std430, binding = 2) volatile buffer f64m42fromIOBuffer { f64mat4x2 f64m42fromIO[]; }; // 64 bytes
+layout(std430, binding = 2) volatile buffer f64m4fromIOBuffer { f64mat4 f64m4fromIO[]; }; // 128 bytes
+layout(std430, binding = 3) buffer toIOBuffer { char toIO[]; };
+layout(std430, binding = 3) buffer i64v4toIOBuffer { i64vec4 i64v4toIO[]; };
 
-#define FREE_IO(f) { ptr_t _ihp_ = fromCPUPtr, _thp_ = toCPUPtr; f; fromCPUPtr = _ihp_; toCPUPtr = _thp_; }
+#define FREE_IO(f) { ptr_t _ihp_ = fromIOPtr, _thp_ = toIOPtr; f; fromIOPtr = _ihp_; toIOPtr = _thp_; }
 
 const string stdin = string(0, 0);
 const string stdout = string(1, 0);
@@ -66,19 +57,19 @@ const string stderr = string(2, 0);
 
 int32_t errno = 0;
 
-ptr_t fromCPUStart = ThreadID * FROM_CPU_SIZE;
-ptr_t fromCPUEnd = heapStart + FROM_CPU_SIZE;
+ptr_t fromIOStart = ThreadId * FromIOSize;
+ptr_t fromIOEnd = fromIOStart + FromIOSize;
 
-ptr_t fromCPUPtr = fromCPUStart;
+ptr_t fromIOPtr = fromIOStart;
 
-ptr_t toCPUStart = ThreadID * TO_CPU_SIZE;
-ptr_t toCPUEnd = heapStart + TO_CPU_SIZE;
+ptr_t toIOStart = ThreadId * ToIOSize;
+ptr_t toIOEnd = toIOStart + ToIOSize;
 
-ptr_t toCPUPtr = toCPUStart;
+ptr_t toIOPtr = toIOStart;
 
 stringArray argv = stringArray(
-    i32heap[ThreadCount * HEAP_SIZE/4],
-    i32heap[ThreadCount * HEAP_SIZE/4 + 1]
+    i32heap[ThreadCount * HeapSize/4],
+    i32heap[ThreadCount * HeapSize/4 + 1]
 );
 
 struct io {
@@ -86,15 +77,15 @@ struct io {
     ptr_t heapBufStart;
 };
 
-alloc_t toCPUMalloc(size_t len) {
-    ptr_t ptr = ((toCPUPtr+31) / 32) * 32;
-    toCPUPtr = ptr + ((len+31) / 32) * 32;
+alloc_t toIOMalloc(size_t len) {
+    ptr_t ptr = ((toIOPtr+31) / 32) * 32;
+    toIOPtr = ptr + ((len+31) / 32) * 32;
     return string(ptr, ptr + len);
 }
 
-alloc_t fromCPUMalloc(size_t len) {
-    ptr_t ptr = ((fromCPUPtr+31) / 32) * 32;
-    fromCPUPtr = ptr + ((len+31) / 32) * 32;
+alloc_t fromIOMalloc(size_t len) {
+    ptr_t ptr = ((fromIOPtr+31) / 32) * 32;
+    fromIOPtr = ptr + ((len+31) / 32) * 32;
     return string(ptr, ptr + len);
 }
 
@@ -117,22 +108,22 @@ int32_t maxIOCount_cached = maxIOCount;
     return dst;\
 }
 
-COPYFUNC(copyHeapToCPU, heap, toCPU)
+COPYFUNC(copyHeapToIO, heap, toIO)
 
-COPYFUNC(copyFromCPUToHeap, fromCPU, heap)
+COPYFUNC(copyFromIOToHeap, fromIO, heap)
 
 io requestIO(ioRequest request) {
     io token = io(0, request.data.x);
     memoryBarrier();
     // memoryBarrier(gl_ScopeDevice, gl_StorageSemanticsBuffer, gl_SemanticsAcquire);
     if (strLen(request.filename) > 0) {
-        request.filename = copyHeapToCPU(request.filename, toCPUMalloc(strLen(request.filename)));
+        request.filename = copyHeapToIO(request.filename, toIOMalloc(strLen(request.filename)));
     }
     if (request.count > 0 && (request.ioType == IO_READ || request.ioType == IO_LS || request.ioType == IO_GETCWD)) {
-        request.data = fromCPUMalloc(size_t(strLen(request.data)));
+        request.data = fromIOMalloc(size_t(strLen(request.data)));
         request.data.y = -1;
     } else if (request.count > 0 && request.ioType == IO_WRITE) {
-        request.data = copyHeapToCPU(request.data, toCPUMalloc(size_t(request.count)));
+        request.data = copyHeapToIO(request.data, toIOMalloc(size_t(request.count)));
         request.data.y = -1;
     }
     memoryBarrier();
@@ -140,23 +131,28 @@ io requestIO(ioRequest request) {
 
     // Replace this with a proper ring buffer that doesn't have issues with wrapping ioCounts.
     int32_t reqNum = atomicAdd(ioCount, 1) % maxIOCount_cached;
+
+    // Wait for possible previous IO to complete :<
+    while(ioRequests[reqNum].status != IO_NONE && ioRequests[reqNum].status < IO_COMPLETE);
+    
     ioRequests[reqNum] = request;
     token.index = reqNum;
     return token;
 }
 
-alloc_t awaitIO(io ioReq, inout int32_t status, bool noCopy, out size_t ioCount) {
+alloc_t awaitIO(io ioReq, inout int32_t status, bool noCopy, out size_t ioCount, out bool compressed) {
     if (ioRequests[ioReq.index].status != IO_NONE) {
-        // Could do data stream decompression while receiving?
-        while (
-            ioRequests[ioReq.index].status < IO_COMPLETE ||
-            ioRequests[ioReq.index].data.y == -1
-        );
+        while (ioRequests[ioReq.index].status < IO_COMPLETE ||
+               ioRequests[ioReq.index].data.y == -1);
     }
+
+    memoryBarrier(gl_ScopeDevice, gl_StorageSemanticsBuffer, gl_SemanticsAcquire);
 
     ioRequest req = ioRequests[ioReq.index];
     status = req.status;
-    memoryBarrier(gl_ScopeDevice, gl_StorageSemanticsBuffer, gl_SemanticsAcquire);
+    compressed = (req.compression != 0);
+    ioCount = size_t(req.count);
+
     if (req.ioType == IO_LS) {
         stringArray res = stringArray(
             toIndexPtr(ioReq.heapBufStart),
@@ -166,28 +162,28 @@ alloc_t awaitIO(io ioReq, inout int32_t status, bool noCopy, out size_t ioCount)
             heapPtr = fromIndexPtr(res.y);
             ptr_t p = req.data.x;
             for (int i = 0; i < req.offset; i++) {
-                int32_t len = int32_t(fromCPU[p]) 
-                            | (int32_t(fromCPU[p+1]) << 8) 
-                            | (int32_t(fromCPU[p+2]) << 16) 
-                            | (int32_t(fromCPU[p+3]) << 24)
+                int32_t len = int32_t(fromIO[p]) 
+                            | (int32_t(fromIO[p+1]) << 8) 
+                            | (int32_t(fromIO[p+2]) << 16) 
+                            | (int32_t(fromIO[p+3]) << 24)
                             ;
                 p += 4;
                 string s = malloc(len);
-                copyFromCPUToHeap(string(p, p+len), s);
+                copyFromIOToHeap(string(p, p+len), s);
                 aSet(res, i, s);
                 p += len;
             }
         )
         return res;
     }
-    if (noCopy || !(req.ioType == IO_READ || req.ioType == IO_GETCWD)) {
-        ioCount = size_t(req.count);
-        ioRequests[ioReq.index].status = IO_HANDLED;
-        return req.data;
-    }
 
-    alloc_t s = alloc_t(ioReq.heapBufStart, ioReq.heapBufStart + strLen(req.data));
-    copyFromCPUToHeap(req.data, s);
+    alloc_t s;
+    if (noCopy || !(req.ioType == IO_READ || req.ioType == IO_GETCWD)) {
+        s = req.data;
+    } else {
+        s = alloc_t(ioReq.heapBufStart, ioReq.heapBufStart + strLen(req.data));
+        copyFromIOToHeap(req.data, s);
+    }
     ioRequests[ioReq.index].status = IO_HANDLED;
 
     return s;
@@ -195,21 +191,29 @@ alloc_t awaitIO(io ioReq, inout int32_t status, bool noCopy, out size_t ioCount)
 
 alloc_t awaitIO(io request, inout int32_t status) {
     size_t count;
-    return awaitIO(request, status, false, count);
+    bool compressed;
+    return awaitIO(request, status, false, count, compressed);
 }
 
 alloc_t awaitIO(io request) {
     size_t count;
-    return awaitIO(request, errno, false, count);
+    bool compressed;
+    return awaitIO(request, errno, false, count, compressed);
 }
 
 alloc_t awaitIO(io request, bool noCopy) {
     size_t count;
-    return awaitIO(request, errno, noCopy, count);
+    bool compressed;
+    return awaitIO(request, errno, noCopy, count, compressed);
 }
 
 alloc_t awaitIO(io request, bool noCopy, out size_t count) {
-    return awaitIO(request, errno, noCopy, count);
+    bool compressed;
+    return awaitIO(request, errno, noCopy, count, compressed);
+}
+
+alloc_t awaitIO(io request, bool noCopy, out size_t count, out bool compressed) {
+    return awaitIO(request, errno, noCopy, count, compressed);
 }
 
 io read(string filename, int64_t offset, size_t count, string buf) {
@@ -295,6 +299,7 @@ io close(int32_t fd) {
 
 
 
+alloc_t readSync(string filename, int64_t offset, size_t count) { return awaitIO(read(filename, offset, count, malloc(count))); }
 alloc_t readSync(string filename, int64_t offset, size_t count, string buf) { return awaitIO(read(filename, offset, count, buf)); }
 alloc_t readSync(string filename, string buf) { return awaitIO(read(filename, buf)); }
 

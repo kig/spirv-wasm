@@ -2,6 +2,8 @@
 
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 
-cpp $1 2>/dev/null | node $DIR/preprocess.js > $2.comp &&
-glslangValidator -V -o $2 $2.comp >/dev/null
-rm $2.comp
+grep -v '^#!' $1 | cpp > $1.full &&
+node "$DIR"/preprocess.js $1.full &&
+glslangValidator -V -o $2 $1.full.comp | grep -v "^$1.full.comp$"
+cat $1.full.defs.spv >> $2
+# && rm $1.full $1.full.comp $1.full.defs.spv

@@ -7,10 +7,6 @@
 
 #define INDEX_SIZE 4
 
-#ifndef HEAP_SIZE
-#define HEAP_SIZE 4096
-#endif
-
 #define FREE(f) { int32_t _hp_ = heapPtr; f; heapPtr = _hp_; }
 
 layout(std430, binding = 0) buffer indexBuf { ptr_t indexHeap[]; };
@@ -84,8 +80,8 @@ layout(std430, binding = 0) buffer f32m4Buffer { f32mat4 f32m4heap[]; };
 layout(std430, binding = 0) buffer f64m4Buffer { f64mat4 f64m4heap[]; };
 
 
-ptr_t heapStart = ThreadID * HEAP_SIZE;
-ptr_t heapEnd = heapStart + HEAP_SIZE;
+ptr_t heapStart = ThreadId * HeapSize;
+ptr_t heapEnd = heapStart + HeapSize;
 
 ptr_t heapPtr = heapStart;
 

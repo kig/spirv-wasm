@@ -4,13 +4,13 @@ class App : public ComputeApplication
 {
   public:
     App() {
-        toGPUSize = 10;
-        workSize[0] = 50;
         timings = true;
         runIO = false;
     }
 
     void runProgram() {
+        printf("Thread count: %d\n", threadCount);
+
         std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
         int i;
         for (i = 0; i < 100; i++) {
@@ -23,16 +23,17 @@ class App : public ComputeApplication
 
     	for (int j = 0; j < threadCount; j++) {
 	    	bool allOk = true;
-	        for (int k = 0; k < fromGPUSize/4; k++) {
-	            int ok = ((int*)mappedFromGPUMemory)[(j+1)*(fromGPUSize/4) + k - 256];
+	    	int k = 0;
+	        for (k = 0; k < 256; k++) {
+	            int ok = ((int*)mappedFromGPUMemory)[(j+1)*(fromGPUSize/4) - 256 + k];
 	            if (ok == 0) break;
 	            if (ok != 1) {
-	            	printf("[%d] Test %d failed: %d\n", k, i, ok);
+	            	printf("[%d] Test %d failed: %d\n", j, k, ok);
 	            	allOk = false;
 	            }
 	        }
 	        if (allOk) {
-	        	// printf("[%d] All tests succeeded.\n", j);
+	        	printf("[%d] All %d tests succeeded.\n", j, k);
 	        }
         }
 

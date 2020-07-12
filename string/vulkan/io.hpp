@@ -11,12 +11,24 @@
 
 // IO compression
 
+#define IO_COMPRESS_SPEED_0 0x00100000
+#define IO_COMPRESS_SPEED_1 0x00200000
+#define IO_COMPRESS_SPEED_2 0x00300000
+#define IO_COMPRESS_SPEED_3 0x00400000
+#define IO_COMPRESS_SPEED_4 0x00500000
+#define IO_COMPRESS_SPEED_5 0x00600000
+#define IO_COMPRESS_SPEED_6 0x00700000
+#define IO_COMPRESS_SPEED_7 0x00800000
+#define IO_COMPRESS_SPEED_8 0x00900000
+#define IO_COMPRESS_SPEED_9 0x00a00000
+
 // LZ4 compressed stream of independent blocks with block size in the lower 24 bits
 #define IO_COMPRESS_LZ4_BLOCK_STREAM (3<<24)
 // Single LZ4 compressed block
 #define IO_COMPRESS_LZ4_BLOCK (2<<24)
 // LZ4 frame stream (Found in e.g. .lz4 files)
 #define IO_COMPRESS_LZ4 (1<<24)
+
 // ZSTD frame stream - No GPU decompressor
 #define IO_COMPRESS_ZSTD (4<<24)
 
