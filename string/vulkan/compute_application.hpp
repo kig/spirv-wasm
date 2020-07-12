@@ -206,6 +206,13 @@ class ComputeApplication
     char *globals = NULL;
     int32_t globalsLen = 0;
 
+    const uint32_t BufferAlign = (1 << 21);
+    const uint32_t BufferAlignMinusOne = BufferAlign - 1;
+
+    uint32_t alignBufferSize(uint32_t sz) {
+        return (sz + BufferAlignMinusOne) / BufferAlign * BufferAlign;
+    }
+
     void run(const char *fileName, int argc, char* argv[])
     {
 
@@ -250,6 +257,11 @@ class ComputeApplication
         timeIval("Find device");
 
         createDevice();
+
+        ioRequestsBufferSize = alignBufferSize(ioRequestsBufferSize);
+        fromGPUBufferSize = alignBufferSize(fromGPUBufferSize);
+        toGPUBufferSize = alignBufferSize(toGPUBufferSize);
+        heapBufferSize = alignBufferSize(heapBufferSize);
 
         // Create input and output buffers
         createBuffer();
@@ -648,8 +660,8 @@ class ComputeApplication
     {
         createAndAllocateBuffer(&toGPUBuffer, toGPUBufferSize, &toGPUMemory, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
         createAndAllocateBuffer(&ioRequestsBuffer, ioRequestsBufferSize, &ioRequestsMemory, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, 0);
-        createAndAllocateBuffer(&heapBuffer, heapBufferSize, &heapMemory, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
         createAndAllocateBuffer(&fromGPUBuffer, fromGPUBufferSize, &fromGPUMemory, VK_MEMORY_PROPERTY_HOST_CACHED_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+        createAndAllocateBuffer(&heapBuffer, heapBufferSize, &heapMemory, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
     }
 
     void createDescriptorSetLayout()

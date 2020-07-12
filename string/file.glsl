@@ -146,12 +146,12 @@ alloc_t awaitIO(io ioReq, inout int32_t status, bool noCopy, out size_t ioCount,
                ioRequests[ioReq.index].data.y == -1);
     }
 
-    memoryBarrier(gl_ScopeDevice, gl_StorageSemanticsBuffer, gl_SemanticsAcquire);
-
     ioRequest req = ioRequests[ioReq.index];
     status = req.status;
     compressed = (req.compression != 0);
     ioCount = size_t(req.count);
+
+    memoryBarrier(gl_ScopeDevice, gl_StorageSemanticsBuffer, gl_SemanticsAcquire);
 
     if (req.ioType == IO_LS) {
         stringArray res = stringArray(
