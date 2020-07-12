@@ -1192,33 +1192,37 @@ class ComputeApplication
                             const int64_t inpBytes = (int) fread(inpPtr, 1, std::min(BLOCK_BYTES, (readCount - totalRead)), fd);
                             totalRead += inpBytes;
                             if (0 == inpBytes) break;
-                            const int64_t cmpBytes = LZ4_compress_fast_continue(lz4Stream, inpPtr, cmpBuf, inpBytes, sizeof(cmpBuf), compressionSpeed);
+                            int64_t cmpBytes = LZ4_compress_fast_continue(lz4Stream, inpPtr, cmpBuf, inpBytes, sizeof(cmpBuf), compressionSpeed);
                             if (cmpBytes <= 0) break;
+
+                            if (totalRead == inpBytes && autoCompress) {
+                                float compressionRatio = (float)cmpBytes / inpBytes;
+                                if (blockOff == 0) {
+                                    if (compressionRatio > 0.7) {
+                                        // Do uncompressed read
+                                        memcpy(toGPUBuf + req.result_start, inpPtr, inpBytes);
+                                        volatileReqs[i].compression = 0;
+                                        volatileReqs[i].progress = inpBytes;
+                                        bytes = inpBytes;
+                                        doUncompressedRead = true;
+                                        break;
+                                    } else if (compressionRatio < 0.3) {
+                                        // Use stronger compression
+                                        compressionSpeed = 3;
+                                        // Recompress first block?
+                                        // LZ4_resetStream_fast(lz4Stream);
+                                        // cmpBytes = LZ4_compress_fast_continue(lz4Stream, inpPtr, cmpBuf, inpBytes, sizeof(cmpBuf), compressionSpeed);
+                                    } else {
+                                        // Use faster compression
+                                        compressionSpeed = 7;
+                                    }
+                                }
+                            }
+
                             memcpy(toGPUBuf + req.result_start + bytes, cmpBuf, cmpBytes);
                             bytes += cmpBytes;
                             blockBytes += cmpBytes;
                             if ((totalRead & (blockSize-1)) == 0) {
-                                if (autoCompress) {
-                                    float compressionRatio = (float)cmpBytes/inpBytes;
-                                    bytes += ((volatile int32_t*)(toGPUBuf + req.result_start))[0]; // Try flushing
-                                    if (blockOff == 0) {
-                                        if (compressionRatio > 0.7) {
-                                            // Do uncompressed read
-                                            volatileReqs[i].compression = 0;
-                                            volatileReqs[i].progress = 0;
-                                            fseek(fd, req.offset, SEEK_SET);
-                                            bytes = 0;
-                                            doUncompressedRead = true;
-                                            break;
-                                        } else if (compressionRatio < 0.3) {
-                                            // Use stronger compression
-                                            compressionSpeed = 3;
-                                        } else {
-                                            // Use faster compression
-                                            compressionSpeed = 7;
-                                        }
-                                    }
-                                }
                                 *(uint32_t*)(toGPUBuf + req.result_start + blockOff) = blockBytes;
                                 if (verbose) fprintf(stderr, "%d\n", blockBytes);
                                 blockBytes = 0;
@@ -1228,8 +1232,12 @@ class ComputeApplication
                             }
                             inpBufIndex = (inpBufIndex + 1) % 2;
                         }
-                        if (!doUncompressedRead) *(int32_t*)(toGPUBuf + req.result_start + blockOff) = blockBytes;
-                        if (verbose && blockBytes > 0) fprintf(stderr, "[%d] = %d\n", req.result_start + blockOff, blockBytes);
+                        if (!doUncompressedRead) {
+                             *(int32_t*)(toGPUBuf + req.result_start + blockOff) = blockBytes;
+                            if (verbose && blockBytes > 0) fprintf(stderr, "[%d] = %d\n", req.result_start + blockOff, blockBytes);
+                            if (verbose && totalRead > 0) fprintf(stderr, "Compression ratio: %.4f\n", (float)bytes/totalRead);
+                            req.status = IO_COMPLETE;
+                        }
 
 
                     } else { // LZ4_BlOCK
@@ -1245,9 +1253,9 @@ class ComputeApplication
                             volatileReqs[i].progress = bytes;
                             inpBufIndex = (inpBufIndex + 1) % 2;
                         }
+                        if (verbose && totalRead > 0) fprintf(stderr, "Compression ratio: %.4f\n", (float)bytes/totalRead);
+                        req.status = IO_COMPLETE;
                     }
-                    if (verbose && totalRead > 0) fprintf(stderr, "Compression ratio: %.4f\n", (float)bytes/totalRead);
-                    req.status = IO_COMPLETE;
 
 
                 } else if (compressionType == IO_COMPRESS_LZ4) { // LZ4_FRAME_STREAM
@@ -1350,7 +1358,6 @@ class ComputeApplication
             if (doUncompressedRead) { // Uncompressed read.
 
                 int64_t count = req.count;
-                bytes = 0;
                 while (bytes < req.count) {
                     int32_t readBytes = fread(toGPUBuf + req.result_start + bytes, 1, std::min(req.count-bytes, 65536L), fd);
                     bytes += readBytes;
@@ -1358,9 +1365,8 @@ class ComputeApplication
                     if (readBytes == 0) break;
                 }
                 totalRead = (int64_t)bytes;
-                req.status = IO_COMPLETE;
                 if (verbose) fprintf(stderr, "Read %d = %ld bytes to GPU\n", bytes, totalRead);
-                //if (verbose) fwrite(toGPUBuf + req.result_start, 1, bytes, stderr);
+                req.status = IO_COMPLETE;
             }
 
             if (file == NULL) { // Request reading file to page cache

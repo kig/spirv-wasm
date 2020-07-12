@@ -1,3 +1,28 @@
+#define getBit(n, idx) (0 != ((n) & (1 << (idx))))
+#define setBit(n, idx) ((n) | (1 << (idx)))
+#define unsetBit(n, idx) ((n) & ~(1 << (idx)))
+
+#define LZ4_OK 0
+#define LZ4_ERROR_MAGIC 1
+#define LZ4_ERROR_VERSION 2
+#define LZ4_ERROR_MISSING_CONTENT_CHECKSUM 3
+#define LZ4_ERROR_DICT_NOT_SUPPORTED 4
+
+uint32_t readU32fromIO(ptr_t i) {
+    return (
+          (uint32_t(u8fromIO[i])   << 0u) 
+        | (uint32_t(u8fromIO[i+1]) << 8u) 
+        | (uint32_t(u8fromIO[i+2]) << 16u) 
+        | (uint32_t(u8fromIO[i+3]) << 24u)
+    );
+}
+
+uint64_t readU64fromIO(ptr_t i) {
+    return packUint2x32(u32vec2(readU32fromIO(i), readU32fromIO(i+4)));
+}
+
+
+
 /*
 i64vec4 rotateLeft(i64vec4 v, i64vec4 v2, int offset) {
     return (v << offset) | (i64vec4(v.yzw, v2.x) >> (64-offset));
@@ -154,29 +179,6 @@ void lz4DecompressBlockStreamFromIOToHeap(int32_t blockIndex, int32_t blockSize,
             j += matchLen;
         }
     }
-}
-
-#define getBit(n, idx) (0 != ((n) & (1 << (idx))))
-#define setBit(n, idx) ((n) | (1 << (idx)))
-#define unsetBit(n, idx) ((n) & ~(1 << (idx)))
-
-#define LZ4_OK 0
-#define LZ4_ERROR_MAGIC 1
-#define LZ4_ERROR_VERSION 2
-#define LZ4_ERROR_MISSING_CONTENT_CHECKSUM 3
-#define LZ4_ERROR_DICT_NOT_SUPPORTED 4
-
-uint32_t readU32fromIO(ptr_t i) {
-    return (
-          (uint32_t(u8fromIO[i])   << 0u) 
-        | (uint32_t(u8fromIO[i+1]) << 8u) 
-        | (uint32_t(u8fromIO[i+2]) << 16u) 
-        | (uint32_t(u8fromIO[i+3]) << 24u)
-    );
-}
-
-uint64_t readU64fromIO(ptr_t i) {
-    return packUint2x32(u32vec2(readU32fromIO(i), readU32fromIO(i+4)));
 }
 
 int lz4DecompressFramesFromIOToHeap(string cmp, string dst) {

@@ -4,7 +4,7 @@ ThreadLocalCount = 256;
 ThreadGroupCount = 64;
 
 #define LZ4_GROUP_SIZE 8
-#define LZ4_STREAM_BLOCK_SIZE 16384
+#define LZ4_STREAM_BLOCK_SIZE 8192
 
 #include "file.glsl"
 #include "lz4.glsl"
@@ -72,7 +72,7 @@ void main() {
                 fromIOPtr = tgHeapStart;
                 toIOPtr = tgHeapStart;
 
-                io r = read(filename, wgOff, wgBufSize, string(tgHeapStart, tgHeapStart + (HeapSize * ThreadLocalCount))); //, IO_COMPRESS_LZ4_BLOCK_STREAM | LZ4_STREAM_BLOCK_SIZE | IO_COMPRESS_SPEED_7);
+                io r = read(filename, wgOff, wgBufSize, string(tgHeapStart, tgHeapStart + (HeapSize * ThreadLocalCount)), IO_COMPRESS_LZ4_BLOCK_STREAM | LZ4_STREAM_BLOCK_SIZE);
                 //io r = read(filename, wgOff, wgBufSize, string(tgHeapStart, tgHeapStart + (HeapSize * ThreadLocalCount)), IO_COMPRESS_LZ4);
                 wgBuf = awaitIO(r, true, decompressedSize, isCompressed);
 
