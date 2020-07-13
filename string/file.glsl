@@ -313,3 +313,15 @@ void print(string message) {
 void println(string message) {
     FREE(print(concat(message, str('\n'))));
 }
+
+void eprint(string message) {
+    FREE_IO(awaitIO(write(stderr, -1, strLen(message), message)));
+}
+
+void eprintln(string message) {
+    FREE(eprint(concat(message, str('\n'))));
+}
+
+void log(string message) {
+    if (ThreadLocalId == 0) eprintln(message);
+}
