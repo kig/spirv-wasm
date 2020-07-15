@@ -19,8 +19,9 @@
 #include <zstd.h>
 #include <lz4.h>
 #include <lz4frame.h>
+#include <dlfcn.h>
 
-#include "io.hpp"
+#include "../io.glsl"
 
 #ifdef WIN32
 #include <io.h>
@@ -80,8 +81,8 @@ struct ioRequest {
     int32_t result_end;
     int32_t compression;
     int32_t progress;
-    int32_t _pad12;
-    int32_t _pad13;
+    int32_t output_start;
+    int32_t output_end;
     int32_t _pad14;
     int32_t _pad15;
 }; // 64 bytes
@@ -172,9 +173,6 @@ class ComputeApplication
 
     uint32_t vulkanDeviceIndex = 0;
 
-    uint32_t heapSize = 4096;
-    uint32_t fromGPUSize = 4096;
-    uint32_t toGPUSize = 4096;
     uint32_t ioSize = sizeof(ioRequests);
 
     uint32_t localSize[3] = {1, 1, 1};
@@ -234,9 +232,6 @@ class ComputeApplication
         int argvLen = 0;
         for (int i = 0; i < argc; i++) argvLen += strlen(argv[i]);
 
-        if (heapBufferSize == 0) heapBufferSize = heapSize * threadCount;
-        if (toGPUBufferSize == 0) toGPUBufferSize = toGPUSize * threadCount;
-        if (fromGPUBufferSize == 0) fromGPUBufferSize = fromGPUSize * threadCount;
         ioRequestsBufferSize = ioSize;
 
         heapGlobalsOffset = heapBufferSize + 8;
@@ -248,7 +243,7 @@ class ComputeApplication
         size_t totalIOSize = toGPUBufferSize; // + fromGPUBufferSize;
         if (verbose) fprintf(stderr, "IO buffers: %zu\n", totalIOSize);
 
-        assert(toGPUBufferSize <= 64*(1<<20));
+        assert(toGPUBufferSize <= 128*(1<<20));
 
         // Initialize vulkan
         createInstance();
@@ -859,10 +854,7 @@ class ComputeApplication
                     if (verbose) fprintf(stderr, "globals[%d]: %s\n", globalsLen, globals);
                 }
                 else if (tag == TAG('tgc=')) workSize[0] = code[j++];
-                else if (tag == TAG('hsz=')) heapSize = code[j++];
                 else if (tag == TAG('ths=')) heapBufferSize = code[j++];
-                else if (tag == TAG('tis=')) fromGPUSize = code[j++];
-                else if (tag == TAG('fis=')) toGPUSize = code[j++];
                 else if (tag == TAG('tti=')) fromGPUBufferSize = code[j++];
                 else if (tag == TAG('tfi=')) toGPUBufferSize = code[j++];
             }
@@ -1380,7 +1372,14 @@ class ComputeApplication
             if (verbose) fprintf(stderr, "Sent count %ld = %ld to GPU\n", totalRead, volatileReqs[i].count);
 
         } else if (req.ioType == IO_WRITE) {
-            auto fd = openFile(filename, file, "rb+");
+            struct stat st;
+            int mode = 0;
+            if (0 != stat(filename, &st)) {
+                mode = 1;
+            }
+            errno = 0;
+            if (verbose) fprintf(stderr, "openFile %s with mode %d\n", filename, mode);
+            auto fd = openFile(filename, file, mode == 0 ? "rb+" : "w");
             app->readFromGPUIO(req.result_start, req.count);
             if (req.offset < 0) {
                 fseek(fd, -1-req.offset, SEEK_END);
@@ -1532,22 +1531,69 @@ class ComputeApplication
 
         } else if (req.ioType == IO_STAT) {
             // Stat a path and return file info
-            struct stat s;
+            struct stat st;
             int ok;
             if (req.offset == 1) {
-                ok = lstat(filename, &s);
+                ok = lstat(filename, &st);
             } else {
-                ok = stat(filename, &s);
+                ok = stat(filename, &st);
             }
-            volatileReqs[i].offset = errno;
-            errno = 0;
-            if (ok == 0) volatileReqs[i].count = s.st_size;
-            if (ok == 0 && req.count >= sizeof(s)) {
-                memcpy(toGPUBuf + req.result_start, &s, sizeof(s));
-                volatileReqs[i].result_end = req.result_start + sizeof(s);
-            } else {
+            if (verbose) fprintf(stderr, "Got %d from stat, req.count = %ld\n", ok, req.count);
+            if (ok == 0 && req.count >= 104) {
+                uint64_t *u64 = (uint64_t*)(toGPUBuf + req.result_start);
+                int i = 0;
+                u64[i++] = st.st_atim.tv_sec;
+                u64[i++] = st.st_atim.tv_nsec;
+                u64[i++] = st.st_mtim.tv_sec;
+                u64[i++] = st.st_mtim.tv_nsec;
+                u64[i++] = st.st_ctim.tv_sec;
+                u64[i++] = st.st_ctim.tv_nsec;
+
+                u64[i++] = st.st_ino;
+                u64[i++] = st.st_size;
+                u64[i++] = st.st_blocks;
+
+                uint32_t *u32 = (uint32_t*)(u64 + i);
+                i = 0;
+                u32[i++] = st.st_dev;
+                u32[i++] = st.st_mode;
+                u32[i++] = st.st_nlink;
+                u32[i++] = st.st_uid;
+                u32[i++] = st.st_gid;
+                u32[i++] = st.st_rdev;
+                u32[i++] = st.st_blksize;
+                ((int32_t*)(u32))[i++] = 0;
+
+                volatileReqs[i].result_end = req.result_start + 104;
+            } else if (ok == 0) {
                 volatileReqs[i].result_end = 0;
+            } else {
+                *((int32_t*)(toGPUBuf + req.result_start + 100)) = errno;
+                errno = 0;
             }
+            req.status = IO_COMPLETE;
+
+        } else if (req.ioType == IO_DLOPEN) {
+            // Load shared library
+            void *lib = dlopen(filename, RTLD_LAZY);
+            *((int64_t*)(toGPUBuf + req.result_start)) = (int64_t)lib;
+            volatileReqs[i].result_end = req.result_start + 8;
+            req.status = IO_COMPLETE;
+
+        } else if (req.ioType == IO_DLCALL) {
+            // Call a function in a shared library
+            void *lib = (void*)req.offset;
+            app->readFromGPUIO(req.result_start, req.count);
+            void *(*func)(void*);
+            *(void **) (&func) = dlsym(lib, filename);
+            void *result = (*func)((void*)(fromGPUBuf + req.result_start));
+            memcpy(toGPUBuf + req.output_start, result, req.output_end-req.output_start);
+            volatileReqs[i].result_end = 0;
+            req.status = IO_COMPLETE;
+
+        } else if (req.ioType == IO_DLCLOSE) {
+            // Close a shared library
+            dlclose((void*)req.offset);
             req.status = IO_COMPLETE;
 
         } else if (req.ioType == IO_LISTEN) {

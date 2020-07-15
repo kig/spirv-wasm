@@ -71,6 +71,13 @@
 // exit() the process.
 #define IO_EXIT 32
 
+// Load a shared library into the IO runtime
+#define IO_DLOPEN 38
+// Call a function in a loaded shared library
+#define IO_DLCALL 39
+// Close a shared library object and release its memory
+#define IO_DLCLOSE 40
+
 // IO system benchmarking functions
 // How fast can you handle IO requests?
 #define IO_NOP 250

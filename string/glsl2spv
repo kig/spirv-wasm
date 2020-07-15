@@ -2,8 +2,21 @@
 
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 
-grep -v '^#!' $1 | cpp > $1.full &&
-node "$DIR"/preprocess.js $1.full &&
-glslangValidator -V -o $2 $1.full.comp | grep -v "^$1.full.comp$"
-cat $1.full.defs.spv >> $2
-# && rm $1.full $1.full.comp $1.full.defs.spv
+if [[ -z $1 ]]
+then
+	echo "USAGE: glsl2spv program.glsl [program.spv]"
+	exit 1
+fi
+
+target=$2
+
+if [[ -z $target ]]
+then
+	target=`echo "$1" | sed -e 's/glsl$/spv/i'`
+fi
+
+grep -v '^#!' "$1" | cpp -I/usr/local/lib/glsl > "$1.full" &&
+node "$DIR"/preprocess.js "$1.full" &&
+glslangValidator -V -o "${target}" "$1.full.comp" | grep -v "^$1.full.comp$"
+cat "$1.full.defs.spv" >> "${target}"
+#&& rm "$1.full" "$1.full.comp" "$1.full.defs.spv"

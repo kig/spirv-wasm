@@ -1,4 +1,4 @@
-#include "thread_id.glsl"
+#include <thread_id.glsl>
 
 #define alloc_t i32vec2
 #define ptr_t int32_t
@@ -84,6 +84,11 @@ ptr_t heapStart = ThreadId * HeapSize;
 ptr_t heapEnd = heapStart + HeapSize;
 
 ptr_t heapPtr = heapStart;
+
+ptr_t groupHeapStart = ThreadGroupId * GroupHeapSize;
+ptr_t groupHeapEnd = groupHeapStart + GroupHeapSize;
+
+shared ptr_t groupHeapPtr;
 
 size_t allocSize(alloc_t a) {
 	return a.y - a.x;

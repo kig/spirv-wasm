@@ -7,7 +7,7 @@ HeapSize = 65536;
 FromIOSize = 65536;
 ToIOSize = 65536;
 
-#include "file.glsl"
+#include <file.glsl>
 
 shared int eof;
 

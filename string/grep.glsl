@@ -6,14 +6,13 @@ ThreadGroupCount = 64;
 #define LZ4_GROUP_SIZE 8
 #define LZ4_STREAM_BLOCK_SIZE 8192
 
-#include "file.glsl"
-#include "lz4.glsl"
+#include <file.glsl>
+#include <lz4.glsl>
 
 shared int done;
 shared int64_t wgOff;
 shared string wgBuf;
 shared int32_t decompressedSize;
-shared ptr_t groupHeapPtr;
 shared bool isCompressed;
 
 void addHit(int32_t k, int32_t off, inout bool found) {
@@ -42,15 +41,28 @@ bool grepBuffer(int32_t blockSize, string buf, string pattern, char p, int32_t o
 
 void main() {
 
+    if (arrLen(argv) < 3) {
+        if (ThreadId == 0) eprintln("USAGE: grep.glsl pattern file");
+        return;
+    }
+
     string pattern = aGet(argv, 1);
     string filename = aGet(argv, 2);
 
-    if (ThreadId == 0) programReturnValue = 1;
-    controlBarrier(gl_ScopeDevice, gl_ScopeDevice, 0, 0);
+    if (ThreadId == 0) {
+        Stat st = statSync(filename);
+        programReturnValue = (st.error == 0) ? 1 : 2;
+        // readaheadSync(filename, 0, st.st_size);
+    }
+    while (programReturnValue == 0); // Wait for first thread.
+
+    if (programReturnValue == 2) {
+        if (ThreadId == 0) eprintln(concat("File not found: ", filename));
+        return;
+    }
 
     int32_t patternLength = strLen(pattern);
-    int32_t blockSize = HeapSize-(((patternLength+31) / 32) * 32);
-    ptr_t tgHeapStart = HeapSize * ThreadLocalCount * ThreadGroupId;
+    int32_t blockSize = HeapSize - (((patternLength+31) / 32) * 32);
     int32_t wgBufSize = ThreadLocalCount * blockSize + patternLength;
 
     if (ThreadLocalId == 0) {
@@ -69,18 +81,16 @@ void main() {
             barrier(); memoryBarrier();
 
             if (ThreadLocalId == 0) {
-                fromIOPtr = tgHeapStart;
-                toIOPtr = tgHeapStart;
+                fromIOPtr = groupHeapStart;
+                toIOPtr = groupHeapStart;
 
-                io r;
-                r = read(filename, wgOff, wgBufSize, string(tgHeapStart, tgHeapStart + (HeapSize * ThreadLocalCount)), IO_COMPRESS_LZ4_BLOCK_STREAM | LZ4_STREAM_BLOCK_SIZE);
-                //r = read(filename, wgOff, wgBufSize, string(tgHeapStart, tgHeapStart + (HeapSize * ThreadLocalCount)), IO_COMPRESS_LZ4);
+                io r = read(filename, wgOff, wgBufSize, string(groupHeapStart, groupHeapStart + (HeapSize * ThreadLocalCount)), IO_COMPRESS_LZ4_BLOCK_STREAM | LZ4_STREAM_BLOCK_SIZE);
                 wgBuf = awaitIO(r, true, decompressedSize, isCompressed);
 
                 if (decompressedSize != wgBufSize) {
                     done = (decompressedSize == 0) ? 2 : 1;
                 }
-                groupHeapPtr = tgHeapStart;
+                groupHeapPtr = groupHeapStart;
                 hitStart = groupHeapPtr;
             }
 
@@ -89,23 +99,18 @@ void main() {
             if (done == 2) break;
 
             if (isCompressed) {
-                /*
-                if (ThreadLocalId < LZ4_GROUP_SIZE) {
-                    lz4DecompressFramesFromIOToHeap(wgBuf, string(tgHeapStart, tgHeapStart + decompressedSize));
-                }
-                */
                 for (int32_t i = 0; i < 128; i += ThreadLocalCount/LZ4_GROUP_SIZE) {
-                    lz4DecompressBlockStreamFromIOToHeap(i + ThreadLocalId/LZ4_GROUP_SIZE, LZ4_STREAM_BLOCK_SIZE, wgBuf, string(tgHeapStart, tgHeapStart + decompressedSize));
+                    lz4DecompressBlockStreamFromIOToHeap(i + ThreadLocalId/LZ4_GROUP_SIZE, LZ4_STREAM_BLOCK_SIZE, wgBuf, string(groupHeapStart, groupHeapStart + decompressedSize));
                 }
             } else {
                 copyFromIOToHeap(
-                    string(tgHeapStart + ThreadLocalId * HeapSize, tgHeapStart + (ThreadLocalId+1) * HeapSize),
-                    string(tgHeapStart + ThreadLocalId * HeapSize, tgHeapStart + (ThreadLocalId+1) * HeapSize)
+                    string(groupHeapStart + ThreadLocalId * HeapSize, groupHeapStart + (ThreadLocalId+1) * HeapSize),
+                    string(groupHeapStart + ThreadLocalId * HeapSize, groupHeapStart + (ThreadLocalId+1) * HeapSize)
                 );
             }
             
             if (ThreadLocalId == 0) {
-                wgBuf = string(tgHeapStart, tgHeapStart + decompressedSize);
+                wgBuf = string(groupHeapStart, groupHeapStart + decompressedSize);
             }
             
             barrier(); memoryBarrier();
@@ -121,18 +126,18 @@ void main() {
             barrier(); memoryBarrier();
 
             if (ThreadLocalId == 0) {
-                fromIOPtr = tgHeapStart;
-                toIOPtr = tgHeapStart;
+                fromIOPtr = groupHeapStart;
+                toIOPtr = groupHeapStart;
                 ptr_t start = hitStart / 4;
                 ptr_t end = groupHeapPtr / 4;
                 
                 if (start != end) {
-                    heapPtr = tgHeapStart;
+                    heapPtr = groupHeapStart;
                     for (int j = start; j < end; j++) {
                         str(int64_t(i32fromIO[j]) + wgOff);
                         _w('\n');
                     }
-                    print(string(tgHeapStart, heapPtr));
+                    print(string(groupHeapStart, heapPtr));
                 }
 
                 wgOff += int64_t(ThreadCount * blockSize);

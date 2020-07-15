@@ -14,13 +14,18 @@ var source = fs.readFileSync(process.argv[2]).toString();
 
 const threadLocalCount = getMatchingDef("ThreadLocalCount", 64);
 const threadGroupCount = getMatchingDef("ThreadGroupCount", 256);
+
 const heapSize = getMatchingDef("HeapSize", 4096);
 const toIOSize = getMatchingDef("ToIOSize", 4096);
 const fromIOSize = getMatchingDef("FromIOSize", 4096);
 
-const totalHeapSize = getMatchingDef("TotalHeapSize", heapSize * threadLocalCount * threadGroupCount);
-const totalToIOSize = getMatchingDef("TotalToIOSize", toIOSize * threadLocalCount * threadGroupCount);
-const totalFromIOSize = getMatchingDef("TotalFromIOSize", fromIOSize * threadLocalCount * threadGroupCount);
+const groupHeapSize = getMatchingDef("GroupHeapSize", heapSize * threadLocalCount);
+const groupToIOSize = getMatchingDef("GroupToIOSize", toIOSize * threadLocalCount);
+const groupFromIOSize = getMatchingDef("GroupFromIOSize", fromIOSize * threadLocalCount);
+
+const totalHeapSize = getMatchingDef("TotalHeapSize", groupHeapSize * threadGroupCount);
+const totalToIOSize = getMatchingDef("TotalToIOSize", groupToIOSize * threadGroupCount);
+const totalFromIOSize = getMatchingDef("TotalFromIOSize", groupFromIOSize * threadGroupCount);
 
 const segments = source.replace(/^# .*/mg, '').split(/("|')/g);
 
@@ -93,6 +98,10 @@ let outputString = `#version 450
 int32_t HeapSize = ${heapSize};
 int32_t FromIOSize = ${fromIOSize};
 int32_t ToIOSize = ${toIOSize};
+
+int32_t GroupHeapSize = ${groupHeapSize};
+int32_t GroupFromIOSize = ${groupFromIOSize};
+int32_t GroupToIOSize = ${groupToIOSize};
 
 int32_t TotalHeapSize = ${totalHeapSize};
 int32_t TotalFromIOSize = ${totalFromIOSize};

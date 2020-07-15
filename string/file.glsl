@@ -1,5 +1,6 @@
-#include "string.glsl"
-#include "vulkan/io.hpp"
+#include <string.glsl>
+#include <io.glsl>
+#include <errno.glsl>
 
 struct ioRequest {
     int32_t ioType;
@@ -10,8 +11,7 @@ struct ioRequest {
     i32vec2 data;
     int32_t compression;
     int32_t progress;
-    int32_t _pad12;
-    int32_t _pad13;
+    i32vec2 data2;
     int32_t _pad14;
     int32_t _pad15;
 };
@@ -67,9 +67,20 @@ ptr_t toIOEnd = toIOStart + ToIOSize;
 
 ptr_t toIOPtr = toIOStart;
 
+ptr_t groupFromIOStart = ThreadGroupId * GroupFromIOSize;
+ptr_t groupFromIOEnd = groupFromIOStart + GroupFromIOSize;
+shared ptr_t groupFromIOPtr;
+
+ptr_t groupToIOStart = ThreadGroupId * GroupToIOSize;
+ptr_t groupToIOEnd = groupToIOStart + GroupToIOSize;
+shared ptr_t groupToIOPtr;
+
+#include <binary_data.glsl>
+#include <stat.glsl>
+
 stringArray argv = stringArray(
-    i32heap[ThreadCount * HeapSize/4],
-    i32heap[ThreadCount * HeapSize/4 + 1]
+    i32heap[HeapGlobalsOffset/4 - 2],
+    i32heap[HeapGlobalsOffset/4 - 1]
 );
 
 struct io {
@@ -119,12 +130,17 @@ io requestIO(ioRequest request) {
     if (strLen(request.filename) > 0) {
         request.filename = copyHeapToIO(request.filename, toIOMalloc(strLen(request.filename)));
     }
-    if (request.count > 0 && (request.ioType == IO_READ || request.ioType == IO_LS || request.ioType == IO_GETCWD)) {
+    if (request.count > 0 && (request.ioType == IO_READ || request.ioType == IO_LS || request.ioType == IO_GETCWD || request.ioType == IO_DLOPEN)) {
         request.data = fromIOMalloc(size_t(strLen(request.data)));
         request.data.y = -1;
-    } else if (request.count > 0 && request.ioType == IO_WRITE) {
+    } else if (request.count > 0 && (request.ioType == IO_WRITE || request.ioType == IO_COPY)) {
         request.data = copyHeapToIO(request.data, toIOMalloc(size_t(request.count)));
         request.data.y = -1;
+    }
+    if (request.count > 0 && (request.ioType == IO_DLCALL)) {
+        request.data = copyHeapToIO(request.data, toIOMalloc(size_t(request.count)));
+        request.data.y = -1;
+        request.data2 = fromIOMalloc(size_t(strLen(request.data2)));
     }
     memoryBarrier();
     // memoryBarrier(gl_ScopeDevice, gl_StorageSemanticsBuffer, gl_SemanticsAcquire);
@@ -174,11 +190,19 @@ alloc_t awaitIO(io ioReq, inout int32_t status, bool noCopy, out size_t ioCount,
                 p += len;
             }
         )
+        ioRequests[ioReq.index].status = IO_HANDLED;
         return res;
+    } else if (req.ioType == IO_DLCALL) {
+        if (noCopy) return req.data2;
+        alloc_t s = alloc_t(ioReq.heapBufStart, ioReq.heapBufStart + strLen(req.data2));
+        copyFromIOToHeap(req.data2, s);
+        ioRequests[ioReq.index].status = IO_HANDLED;
+        return s;
     }
 
     alloc_t s;
-    if (noCopy || !(req.ioType == IO_READ || req.ioType == IO_GETCWD)) {
+    // Leave data in the IO buffer if the noCopy flag is set or if the IO is not one that returns data.
+    if (noCopy || !(req.ioType == IO_READ || req.ioType == IO_GETCWD || req.ioType == IO_STAT || req.ioType == IO_DLOPEN)) {
         s = req.data;
     } else {
         s = alloc_t(ioReq.heapBufStart, ioReq.heapBufStart + strLen(req.data));
@@ -217,11 +241,11 @@ alloc_t awaitIO(io request, bool noCopy, out size_t count, out bool compressed) 
 }
 
 io read(string filename, int64_t offset, size_t count, string buf) {
-    return requestIO(ioRequest(IO_READ, IO_START, offset, min(count, strLen(buf)), filename, buf,0,0,0,0,0,0));
+    return requestIO(ioRequest(IO_READ, IO_START, offset, min(count, strLen(buf)), filename, buf,0,0,string(0,0),0,0));
 }
 
 io read(string filename, int64_t offset, size_t count, string buf, int32_t compression) {
-    return requestIO(ioRequest(IO_READ, IO_START, offset, min(count, strLen(buf)), filename, buf, compression, 0,0,0,0,0));
+    return requestIO(ioRequest(IO_READ, IO_START, offset, min(count, strLen(buf)), filename, buf, compression, 0,string(0,0),0,0));
 }
 
 io read(string filename, string buf) {
@@ -229,7 +253,7 @@ io read(string filename, string buf) {
 }
 
 io write(string filename, int64_t offset, size_t count, string buf) {
-    return requestIO(ioRequest(IO_WRITE, IO_START, offset, min(count, strLen(buf)), filename, buf,0,0,0,0,0,0));
+    return requestIO(ioRequest(IO_WRITE, IO_START, offset, min(count, strLen(buf)), filename, buf,0,0,string(0,0),0,0));
 }
 
 io write(string filename, string buf) {
@@ -237,67 +261,64 @@ io write(string filename, string buf) {
 }
 
 io truncateFile(string filename, size_t count) {
-    return requestIO(ioRequest(IO_TRUNCATE, IO_START, 0, count, filename, string(0,0),0,0,0,0,0,0));
+    return requestIO(ioRequest(IO_TRUNCATE, IO_START, 0, count, filename, string(0,0),0,0,string(0,0),0,0));
 }
 
 io deleteFile(string filename) {
-    return requestIO(ioRequest(IO_DELETE, IO_START, 0, 0, filename, string(0,0),0,0,0,0,0,0));
+    return requestIO(ioRequest(IO_DELETE, IO_START, 0, 0, filename, string(0,0),0,0,string(0,0),0,0));
 }
 
 io createFile(string filename) {
-    return requestIO(ioRequest(IO_CREATE, IO_START, 0, 0, filename, string(0,0),0,0,0,0,0,0));
+    return requestIO(ioRequest(IO_CREATE, IO_START, 0, 0, filename, string(0,0),0,0,string(0,0),0,0));
 }
 
 io runCmd(string cmd) {
-    return requestIO(ioRequest(IO_RUN_CMD, IO_START, 0, 0, cmd, string(0,0),0,0,0,0,0,0));
+    return requestIO(ioRequest(IO_RUN_CMD, IO_START, 0, 0, cmd, string(0,0),0,0,string(0,0),0,0));
 }
 
 io mkdir(string dirname) {
-    return requestIO(ioRequest(IO_MKDIR, IO_START, 0, 0, dirname, string(0,0),0,0,0,0,0,0));
+    return requestIO(ioRequest(IO_MKDIR, IO_START, 0, 0, dirname, string(0,0),0,0,string(0,0),0,0));
 }
 
 io rmdir(string dirname) {
-    return requestIO(ioRequest(IO_RMDIR, IO_START, 0, 0, dirname, string(0,0),0,0,0,0,0,0));
+    return requestIO(ioRequest(IO_RMDIR, IO_START, 0, 0, dirname, string(0,0),0,0,string(0,0),0,0));
 }
 
 io ls(string dirname, alloc_t data) {
-    return requestIO(ioRequest(IO_LS, IO_START, 0, strLen(data), dirname, data,0,0,0,0,0,0));
+    return requestIO(ioRequest(IO_LS, IO_START, 0, strLen(data), dirname, data,0,0,string(0,0),0,0));
 }
 
 io ls(string dirname, alloc_t data, int32_t offset) {
-    return requestIO(ioRequest(IO_LS, IO_START, offset, strLen(data), dirname, data,0,0,0,0,0,0));
+    return requestIO(ioRequest(IO_LS, IO_START, offset, strLen(data), dirname, data,0,0,string(0,0),0,0));
 }
 
 io getCwd(string data) {
-    return requestIO(ioRequest(IO_GETCWD, IO_START, 0, strLen(data), string(0,0), data,0,0,0,0,0,0));
+    return requestIO(ioRequest(IO_GETCWD, IO_START, 0, strLen(data), string(0,0), data,0,0,string(0,0),0,0));
 }
 
 io getCwd() {
-    return requestIO(ioRequest(IO_GETCWD, IO_START, 0, 256, string(0,0), malloc(256),0,0,0,0,0,0));
+    return requestIO(ioRequest(IO_GETCWD, IO_START, 0, 256, string(0,0), malloc(256),0,0,string(0,0),0,0));
 }
 
 io chdir(string dirname) {
-    return requestIO(ioRequest(IO_CD, IO_START, 0, 0, dirname, string(0,0),0,0,0,0,0,0));
+    return requestIO(ioRequest(IO_CD, IO_START, 0, 0, dirname, string(0,0), 0,0,string(0,0),0,0));
 }
 
-io stat(string filename, alloc_t st) {
-    return requestIO(ioRequest(IO_STAT, IO_START, 0, 0, filename, st,0,0,0,0,0,0));
-}
-
-io stat(string filename) {
-    return requestIO(ioRequest(IO_STAT, IO_START, 0, 0, filename, string(0,0),0,0,0,0,0,0));
+io stat(string filename, alloc_t statBuf) {
+    return requestIO(ioRequest(IO_STAT, IO_START, 0, min(strLen(statBuf), StatSize), filename, statBuf, 0,0,string(0,0),0,0));
 }
 
 io open(string filename) {
-    return requestIO(ioRequest(IO_OPEN, IO_START, 0, 0, filename, string(0,0),0,0,0,0,0,0));
+    return requestIO(ioRequest(IO_OPEN, IO_START, 0, 0, filename, string(0,0), 0,0,string(0,0),0,0));
 }
 
 io close(int32_t fd) {
-    return requestIO(ioRequest(IO_CLOSE, IO_START, 0, 0, string(fd, 0), string(0,0),0,0,0,0,0,0));
+    return requestIO(ioRequest(IO_CLOSE, IO_START, 0, 0, string(fd, 0), string(0,0), 0,0,string(0,0),0,0));
 }
 
-
-
+io exit(int32_t exitCode) {
+    return requestIO(ioRequest(IO_EXIT, IO_START, exitCode, 0, string(0,0), string(0,0), 0,0,string(0,0),0,0));
+}
 
 alloc_t readSync(string filename, int64_t offset, size_t count) { return awaitIO(read(filename, offset, count, malloc(count))); }
 alloc_t readSync(string filename, int64_t offset, size_t count, string buf) { return awaitIO(read(filename, offset, count, buf)); }
@@ -325,3 +346,20 @@ void eprintln(string message) {
 void log(string message) {
     if (ThreadLocalId == 0) eprintln(message);
 }
+
+Stat awaitStat(io request) {
+    return initStat(awaitIO(request));
+}
+
+Stat statSync(string filename) {
+    Stat st;
+    FREE_IO(FREE(
+        st = awaitStat(stat(filename, malloc(StatSize)));
+    ))
+    return st;
+}
+
+bool fileExistsSync(string filename) {
+    return statSync(filename).error == 0;
+}
+
