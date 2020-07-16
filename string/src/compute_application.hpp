@@ -21,7 +21,7 @@
 #include <lz4frame.h>
 #include <dlfcn.h>
 
-#include "../io.glsl"
+#include "../lib/io.glsl"
 
 #ifdef WIN32
 #include <io.h>
@@ -81,8 +81,8 @@ struct ioRequest {
     int32_t result_end;
     int32_t compression;
     int32_t progress;
-    int32_t output_start;
-    int32_t output_end;
+    int32_t data2_start;
+    int32_t data2_end;
     int32_t _pad14;
     int32_t _pad15;
 }; // 64 bytes
@@ -1584,10 +1584,9 @@ class ComputeApplication
             // Call a function in a shared library
             void *lib = (void*)req.offset;
             app->readFromGPUIO(req.result_start, req.count);
-            void *(*func)(void*);
+            void (*func)(void* src, uint32_t srcLength, void* dst, uint32_t dstLength);
             *(void **) (&func) = dlsym(lib, filename);
-            void *result = (*func)((void*)(fromGPUBuf + req.result_start));
-            memcpy(toGPUBuf + req.output_start, result, req.output_end-req.output_start);
+            (*func)((void*)(fromGPUBuf + req.result_start), int32_t(req.count), (void*)(toGPUBuf + req.data2_start), req.data2_end-req.data2_start);
             volatileReqs[i].result_end = 0;
             req.status = IO_COMPLETE;
 

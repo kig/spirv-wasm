@@ -140,6 +140,7 @@ io requestIO(ioRequest request) {
     if (request.count > 0 && (request.ioType == IO_DLCALL)) {
         request.data = copyHeapToIO(request.data, toIOMalloc(size_t(request.count)));
         request.data.y = -1;
+        token.heapBufStart = request.data2.x;
         request.data2 = fromIOMalloc(size_t(strLen(request.data2)));
     }
     memoryBarrier();

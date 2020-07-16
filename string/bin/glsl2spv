@@ -16,7 +16,7 @@ then
 fi
 
 grep -v '^#!' "$1" | cpp -I/usr/local/lib/glsl > "$1.full" &&
-node "$DIR"/preprocess.js "$1.full" &&
-glslangValidator -V -o "${target}" "$1.full.comp" | grep -v "^$1.full.comp$"
-cat "$1.full.defs.spv" >> "${target}"
-#&& rm "$1.full" "$1.full.comp" "$1.full.defs.spv"
+node "$DIR"/gls_preprocess.js "$1.full" &&
+glslangValidator -V -o "${target}" "$1.full.comp" 1>&2 &&
+cat "$1.full.defs.spv" >> "${target}" &&
+rm "$1.full" "$1.full.comp" "$1.full.defs.spv"
