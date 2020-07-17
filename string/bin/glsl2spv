@@ -15,8 +15,14 @@ then
 	target=`echo "$1" | sed -e 's/glsl$/spv/i'`
 fi
 
-grep -v '^#!' "$1" | cpp -I/usr/local/lib/glsl > "$1.full" &&
-node "$DIR"/gls_preprocess.js "$1.full" &&
-glslangValidator -V -o "${target}" "$1.full.comp" 1>&2 &&
-cat "$1.full.defs.spv" >> "${target}" &&
-rm "$1.full" "$1.full.comp" "$1.full.defs.spv"
+tmp_dir=$(mktemp -d -t gls-XXXXXXXXXX)
+tmp=${tmp_dir}/$(basename "$1")
+
+grep -v '^#!' "$1" | cpp -I/usr/local/lib/glsl > "${tmp}.full" &&
+node "$DIR"/gls_preprocess.js "${tmp}.full" &&
+glslangValidator -V -o "${target}" "${tmp}.full.comp" | grep -v "^${tmp}.full.comp$"
+if [[ -f "${target}" ]]
+then
+	cat "${tmp}.full.defs.spv" >> "${target}" &&
+	rm -r "${tmp_dir}"
+fi

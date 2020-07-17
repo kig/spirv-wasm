@@ -1,5 +1,5 @@
 CPP := clang++
-CFLAGS := -m64 -O2 -march=znver1 -mtune=znver1 -std=c++17
+CFLAGS := -m64 -O2 -march=native -mtune=native -std=c++17
 LDFLAGS := -ldl -llz4 -lzstd -lvulkan -lpthread
 
 gls:

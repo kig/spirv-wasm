@@ -1,3 +1,5 @@
+#!/usr/bin/env gls
+
 #include <file.glsl>
 #include <dlopen.glsl>
 
