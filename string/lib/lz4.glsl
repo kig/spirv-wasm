@@ -5,9 +5,36 @@
 #define LZ4_ERROR_DICT_NOT_SUPPORTED 4
 
 void parMemcpyFromIOToHeap(ptr_t src, ptr_t dst, size_t len, size_t groupSize, ptr_t threadId) {
-    int32_t k = 0;
-    for (; k < len-(groupSize-1); k+=groupSize) u8heap[k+dst+threadId] = u8fromIO[k+src+threadId];
-    if (k < len && threadId < len-k) u8heap[k+dst+threadId] = u8fromIO[k+src+threadId];
+
+/*
+    if ((src & 15) == 0 && (dst & 15) == 0) {
+        len = (len+15) / 16;
+        src /= 16;
+        dst /= 16;
+        int32_t k = 0;
+        for (; k < len-(groupSize-1); k+=groupSize) i64v2heap[k+dst+threadId] = i64v2fromIO[k+src+threadId];
+        if (k < len && threadId < len-k) i64v2heap[k+dst+threadId] = i64v2fromIO[k+src+threadId];
+    } else if ((src & 7) == 0 && (dst & 7) == 0) {
+        len = (len+7) / 8;
+        src /= 8;
+        dst /= 8;
+        int32_t k = 0;
+        for (; k < len-(groupSize-1); k+=groupSize) i64heap[k+dst+threadId] = i64fromIO[k+src+threadId];
+        if (k < len && threadId < len-k) i64heap[k+dst+threadId] = i64fromIO[k+src+threadId];
+    } else if ((src & 3) == 0 && (dst & 3) == 0) {
+        len = (len+3) / 4;
+        src /= 4;
+        dst /= 4;
+        int32_t k = 0;
+        for (; k < len-(groupSize-1); k+=groupSize) i32heap[k+dst+threadId] = i32fromIO[k+src+threadId];
+        if (k < len && threadId < len-k) i32heap[k+dst+threadId] = i32fromIO[k+src+threadId];
+    } else 
+*/
+    {
+        int32_t k = 0;
+        for (; k < len-(groupSize-1); k+=groupSize) u8heap[k+dst+threadId] = u8fromIO[k+src+threadId];
+        if (k < len && threadId < len-k) u8heap[k+dst+threadId] = u8fromIO[k+src+threadId];
+    }
 }
 
 void parMemcpyFromHeapToHeap(ptr_t src, ptr_t dst, size_t len, size_t groupSize, ptr_t threadId) {

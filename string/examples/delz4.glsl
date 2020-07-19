@@ -1,51 +1,21 @@
 #!/usr/bin/env gls
 
 ThreadLocalCount = 32;
-ThreadGroupCount = 72;
+ThreadGroupCount = 256;
 
-TotalHeapSize =   320000000;
-TotalToIOSize =   80000000;
-TotalFromIOSize = 80000000;
+TotalHeapSize =   1258291200;
+TotalToIOSize =   83886080;
+TotalFromIOSize = 83886080;
 
 #define LZ4_GROUP_SIZE 32
 
 #include <file.glsl>
 #include <lz4.glsl>
 
-
-// Continue decompression from where we left before.
-// [frame hdr] [block] [block] [blo | ck] [block] [bloc | k] [block] [block] [end]
-
-// [block 1 write target] [block 2 write target] [block 3 write target] ...
-
-// If blocks are not independent, we need the previous uncompressed block for decompression.
-// [previous uncompressed block] [current uncompressed write block]
-
-// The max size of the compressed block is 4 + uncompressed block size.
-
-// How this would work:
-//
-// 1. read frame header and first block from compressed
-// 2. if (i + blockLength > strLen(compressed)) { memmove(compressed, i, blockLength-i); read(file, off, compressed, blockLength-i); }
-// 3. decompress block from compressed into currentWriteBuffer
-// 4. flip writeBuffers, shift compressed to start of buf, fill the compressed buf, continue
-//
-// For parallel decompression, would have to operate on multiple independent blocks at a time.
-//
-// 1. parallel read to load compressed data into global IO buffer
-// 2. ThreadId 0 goes through loaded data, grabbing block offsets and lengths as it goes and storing them to the global heap
-// 3. ThreadId 0 flips a global atomic to tell decompressors to get to work
-// 3. Thread groups have heap allocation matching uncompressed block size
-// 4. Each thread group uncompresses a block in parallel, then issues pwrite and toggles the block completion atomic
-// 5. ThreadId 0 waits for block completions and replaces compressed blocks with new ones
-
-// [6. for grep, issue text search on uncompressed blocks in file order]
-
 #define BLOCK_COUNT 72
-#define LZ4_BLOCK_COUNT 72
+#define LZ4_BLOCK_COUNT 256
 
-
-const int32_t bsz = 1048576;
+const int32_t bsz = (1<<20);
 
 const int32_t compressedBlocksCount = ((LZ4_BLOCK_COUNT+1) * (1<<22)) / 4;
 const stringArray compressedBlocks = (compressedBlocksCount + 1) + stringArray(0, 18000);
@@ -98,7 +68,7 @@ void main() {
             FREE_IO(
                 for (int i=ThreadGroupId; i < BLOCK_COUNT; i+=ThreadGroupCount, fromIOPtr += (ThreadGroupCount-1)*bsz) {
                     ios[readBlockCount++] = read(filename, readOffset+int64_t(ThreadGroupId*bsz), bsz, string(i*bsz, (i+1)*bsz));
-                    readOffset += bsz * ThreadGroupCount;
+                    readOffset += bsz * min(BLOCK_COUNT, ThreadGroupCount);
                 }
                 for (int i = 0; i < readBlockCount; i++) {
                     string compressed = awaitIO(ios[i], true);
@@ -165,6 +135,7 @@ void main() {
                 string compressed = aGet(compressedBlocks,j);
                 if (compressed.y < 0) {
                     compressed.y = abs(compressed.y);
+//                    parMemcpyFromIOToHeap(compressed.x, i*(1<<22), (1<<22), LZ4_GROUP_SIZE, ThreadId % LZ4_GROUP_SIZE);
                     parMemcpyFromIOToHeap(compressed.x, i*(1<<22), strLen(compressed), LZ4_GROUP_SIZE, ThreadId % LZ4_GROUP_SIZE);
                     if (ThreadId % LZ4_GROUP_SIZE == 0) i32heap[uncompressedLengths + i] = strLen(compressed);
                 } else {
