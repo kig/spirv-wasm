@@ -4,7 +4,7 @@ ThreadLocalCount = 32;
 ThreadGroupCount = 256;
 
 TotalHeapSize =   1258291200;
-TotalToIOSize =   83886080;
+TotalToIOSize =   1283886080;
 TotalFromIOSize = 83886080;
 
 #define LZ4_GROUP_SIZE 32
@@ -27,6 +27,9 @@ const string readBuffer = string(0, BLOCK_COUNT*bsz);
 #define IsLastBlock io_pad_5
 #define ReadCount io_pad_4
 #define ReadBarrier io_pad_3
+#define WriteLength io_pad_6
+
+shared int64_t writeLength;
 
 void main() {
 
@@ -53,15 +56,16 @@ void main() {
     barrier();
 
     uint32_t contentChecksum = 0;
+    io writeIO;
 
     error = LZ4_OK;
 
     while (ReadCount == 0) {
         barrier(); memoryBarrier();
         if (ThreadLocalId == 0) {
-            heapPtr = groupHeapStart;
+            heapPtr = TotalHeapSize - 4096*ThreadGroupId;
             fromIOPtr = ThreadGroupId*bsz;
-            toIOPtr = groupToIOStart;
+            toIOPtr = TotalToIOSize - 4096*ThreadGroupId;
 
             int readBlockCount = 0;
             io ios[BLOCK_COUNT];
@@ -85,8 +89,9 @@ void main() {
 
             int32_t blockCount = 0;
 
-            log(concat("reads done ", str(ReadCount), " / ", str(BLOCK_COUNT)));
+            //log(concat("reads done ", str(ReadCount), " / ", str(BLOCK_COUNT)));
 
+            if (!firstBlock) awaitIO(writeIO);
             if (firstBlock) {
                 parseOffset = readLZ4FrameHeaderFromIO(0, header, error);
                 firstBlock = false;
@@ -114,7 +119,7 @@ void main() {
             i32heap[compressedBlocksCount] = blockCount;
             //FREE(FREE_IO(log(concat("block count: ", str(blockCount)))));
             //if (ReadCount != BLOCK_COUNT) FREE(FREE_IO(log(concat("Total compressed length: ", str(totalLen)))));
-            if (blockLength == 0) FREE(FREE_IO(log(concat("Total compressed length: ", str(totalLen)))));
+            //if (blockLength == 0) FREE(FREE_IO(log(concat("Total compressed length: ", str(totalLen)))));
             ReadCount = ReadCount == BLOCK_COUNT ? 0 : 1;
 
             parseOffset = parseOffset % (BLOCK_COUNT * bsz);
@@ -167,7 +172,21 @@ void main() {
                 //FREE(FREE_IO(log(concat("Uncompressed ", str(len), " blocks to ", str(uncompressedLen)))));
                 totalUncompressedLen += uncompressedLen;
 
+                WriteLength = int32_t(uncompressedLen);
+
                 IsLastBlock = j >= blockCount ? 1 : 0;
+                ReadBarrier = 0;
+            }
+            while (ReadBarrier != 0);
+            barrier(); memoryBarrier();
+            for (int32_t i = ThreadId; i <= WriteLength / 16; i += ThreadCount) {
+                i64v2toIO[i] = i64v2heap[i];
+            }
+            barrier();
+            if (ThreadLocalId == 0) atomicAdd(ReadBarrier, 1);
+            if (ThreadId == 0) {
+                while (ReadBarrier < ThreadGroupCount);
+                writeIO = write(stdout, -1, size_t(WriteLength), string(0, size_t(WriteLength)), false);
                 ReadBarrier = 0;
             }
             while (ReadBarrier != 0);
@@ -176,8 +195,9 @@ void main() {
         }
         barrier(); memoryBarrier();
     }
-    if (ThreadId == 0) {
-        log(concat("Total uncompressed size: ", str(totalUncompressedLen)));
+    if (ThreadId == 0 && !firstBlock) {
+        awaitIO(writeIO);
+        //log(concat("Total uncompressed size: ", str(totalUncompressedLen)));
     }
 }
 

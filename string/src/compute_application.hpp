@@ -39,11 +39,11 @@ const bool enableValidationLayers = true;
 // Used for validating return values of Vulkan API calls.
 #define VK_CHECK_RESULT(f)                                                                \
     {                                                                                     \
-        VkResult res = (f);                                                               \
-        if (res != VK_SUCCESS)                                                            \
+        VkResult _res_ = (f);                                                               \
+        if (_res_ != VK_SUCCESS)                                                            \
         {                                                                                 \
-            printf("Fatal : VkResult is %d in %s at line %d\n", res, __FILE__, __LINE__); \
-            assert(res == VK_SUCCESS);                                                    \
+            fprintf(stderr, "Fatal : VkResult is %d in %s at line %d\n", _res_, __FILE__, __LINE__); \
+            assert(_res_ == VK_SUCCESS);                                                    \
         }                                                                                 \
     }
 
@@ -971,7 +971,14 @@ class ComputeApplication
     }
 
     void waitForFence(VkFence *fence) {
-        VK_CHECK_RESULT(vkWaitForFences(device, 1, fence, VK_TRUE, 1000000000000));
+        while(true) {
+            VkResult res = vkWaitForFences(device, 1, fence, VK_TRUE, 1000000000);
+            if (res == VK_SUCCESS) break;
+            if (res != VK_TIMEOUT) {
+                VK_CHECK_RESULT(res);
+                break;
+            }
+        }
         VK_CHECK_RESULT(vkResetFences(device, 1, fence));
     }
 

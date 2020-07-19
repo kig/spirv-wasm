@@ -47,7 +47,14 @@ layout(std430, binding = 2) volatile buffer i64v4fromIOBuffer { i64vec4 i64v4fro
 layout(std430, binding = 2) volatile buffer f64m42fromIOBuffer { f64mat4x2 f64m42fromIO[]; }; // 64 bytes
 layout(std430, binding = 2) volatile buffer f64m4fromIOBuffer { f64mat4 f64m4fromIO[]; }; // 128 bytes
 layout(std430, binding = 3) buffer toIOBuffer { char toIO[]; };
+layout(std430, binding = 3) buffer u8toIOBuffer { uint8_t u8toIO[]; };
+layout(std430, binding = 3) buffer i16toIOBuffer { int16_t i16toIO[]; };
+layout(std430, binding = 3) buffer i32toIOBuffer { int32_t i32toIO[]; };
+layout(std430, binding = 3) buffer i64toIOBuffer { int64_t i64toIO[]; };
+layout(std430, binding = 3) buffer i64v2toIOBuffer { i64vec2 i64v2toIO[]; };
 layout(std430, binding = 3) buffer i64v4toIOBuffer { i64vec4 i64v4toIO[]; };
+layout(std430, binding = 3) buffer f64m42toIOBuffer { f64mat4x2 f64m42toIO[]; };
+layout(std430, binding = 3) buffer f64m4toIOBuffer { f64mat4 f64m4toIO[]; };
 
 #define FREE_IO(f) { ptr_t _ihp_ = fromIOPtr, _thp_ = toIOPtr; f; fromIOPtr = _ihp_; toIOPtr = _thp_; }
 
@@ -108,8 +115,13 @@ int32_t maxIOCount_cached = maxIOCount;
 
 #define COPYFUNC(NAME, SRC, DST) alloc_t NAME(alloc_t src, alloc_t dst) {\
     ptr_t s=src.x, d=dst.x;\
+    if ((d & 127) == 0 && (s & 127) == 0) {\
+        for (; d<dst.y - 127 && s<src.y - 127; d+=128, s+=128) {\
+            f64m4##DST[d/128] = f64m4##SRC[s/128];\
+        }\
+    }\
     if ((d & 31) == 0 && (s & 31) == 0) {\
-        for (; d<dst.y - 31 && s<src.y; d+=32, s+=32) {\
+        for (; d<dst.y - 31 && s<src.y - 31; d+=32, s+=32) {\
             i64v4##DST[d/32] = i64v4##SRC[s/32];\
         }\
     }\
@@ -123,7 +135,7 @@ COPYFUNC(copyHeapToIO, heap, toIO)
 
 COPYFUNC(copyFromIOToHeap, fromIO, heap)
 
-io requestIO(ioRequest request) {
+io requestIO(ioRequest request, bool needToCopyDataToIO) {
     io token = io(0, request.data.x);
     memoryBarrier();
     // memoryBarrier(gl_ScopeDevice, gl_StorageSemanticsBuffer, gl_SemanticsAcquire);
@@ -134,11 +146,11 @@ io requestIO(ioRequest request) {
         request.data = fromIOMalloc(size_t(strLen(request.data)));
         request.data.y = -1;
     } else if (request.count > 0 && (request.ioType == IO_WRITE || request.ioType == IO_COPY)) {
-        request.data = copyHeapToIO(request.data, toIOMalloc(size_t(request.count)));
+        if (needToCopyDataToIO) request.data = copyHeapToIO(request.data, toIOMalloc(size_t(request.count)));
         request.data.y = -1;
     }
     if (request.count > 0 && (request.ioType == IO_DLCALL)) {
-        request.data = copyHeapToIO(request.data, toIOMalloc(size_t(request.count)));
+        if (needToCopyDataToIO) request.data = copyHeapToIO(request.data, toIOMalloc(size_t(request.count)));
         request.data.y = -1;
         token.heapBufStart = request.data2.x;
         request.data2 = fromIOMalloc(size_t(strLen(request.data2)));
@@ -155,6 +167,10 @@ io requestIO(ioRequest request) {
     ioRequests[reqNum] = request;
     token.index = reqNum;
     return token;
+}
+
+io requestIO(ioRequest request) {
+    return requestIO(request, true);
 }
 
 alloc_t awaitIO(io ioReq, inout int32_t status, bool noCopy, out size_t ioCount, out bool compressed) {
@@ -251,6 +267,10 @@ io read(string filename, int64_t offset, size_t count, string buf, int32_t compr
 
 io read(string filename, string buf) {
     return read(filename, 0, strLen(buf), buf);
+}
+
+io write(string filename, int64_t offset, size_t count, string buf, bool needToCopyDataToIO) {
+    return requestIO(ioRequest(IO_WRITE, IO_START, offset, min(count, strLen(buf)), filename, buf,0,0,string(0,0),0,0), needToCopyDataToIO);
 }
 
 io write(string filename, int64_t offset, size_t count, string buf) {
