@@ -4,18 +4,18 @@
 
 int32_t readI32fromIO(ptr_t i) {
     return (
-          (int32_t(u8fromIO[i])   << 0u) 
-        | (int32_t(u8fromIO[i+1]) << 8u) 
-        | (int32_t(u8fromIO[i+2]) << 16u) 
+          (int32_t(u8fromIO[i])   << 0u)
+        | (int32_t(u8fromIO[i+1]) << 8u)
+        | (int32_t(u8fromIO[i+2]) << 16u)
         | (int32_t(u8fromIO[i+3]) << 24u)
     );
 }
 
 uint32_t readU32fromIO(ptr_t i) {
     return (
-          (uint32_t(u8fromIO[i])   << 0u) 
-        | (uint32_t(u8fromIO[i+1]) << 8u) 
-        | (uint32_t(u8fromIO[i+2]) << 16u) 
+          (uint32_t(u8fromIO[i])   << 0u)
+        | (uint32_t(u8fromIO[i+1]) << 8u)
+        | (uint32_t(u8fromIO[i+2]) << 16u)
         | (uint32_t(u8fromIO[i+3]) << 24u)
     );
 }
@@ -26,18 +26,18 @@ uint64_t readU64fromIO(ptr_t i) {
 
 int32_t readI32heap(ptr_t i) {
     return (
-          (int32_t(u8heap[i])   << 0u) 
-        | (int32_t(u8heap[i+1]) << 8u) 
-        | (int32_t(u8heap[i+2]) << 16u) 
+          (int32_t(u8heap[i])   << 0u)
+        | (int32_t(u8heap[i+1]) << 8u)
+        | (int32_t(u8heap[i+2]) << 16u)
         | (int32_t(u8heap[i+3]) << 24u)
     );
 }
 
 uint32_t readU32heap(ptr_t i) {
     return (
-          (uint32_t(u8heap[i])   << 0u) 
-        | (uint32_t(u8heap[i+1]) << 8u) 
-        | (uint32_t(u8heap[i+2]) << 16u) 
+          (uint32_t(u8heap[i])   << 0u)
+        | (uint32_t(u8heap[i+1]) << 8u)
+        | (uint32_t(u8heap[i+2]) << 16u)
         | (uint32_t(u8heap[i+3]) << 24u)
     );
 }

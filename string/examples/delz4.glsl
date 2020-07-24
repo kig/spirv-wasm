@@ -1,41 +1,48 @@
 #!/usr/bin/env gls
 
 ThreadLocalCount = 32;
-ThreadGroupCount = 256;
+ThreadGroupCount = 216;
 
-TotalHeapSize =   1258291200;
+TotalHeapSize =   2040000000;
 TotalToIOSize =   1283886080;
 TotalFromIOSize = 83886080;
 
-#define LZ4_GROUP_SIZE 32
 
 #include <file.glsl>
+
+#define LZ4_GROUP_SIZE 32
+ptr_t LZ4Literals = (TotalHeapSize - (218 * 4096) - ThreadGroupId * 2*8*4*ThreadLocalCount) / 16;
+ptr_t LZ4Matches = (LZ4Literals + ThreadLocalCount);
+
 #include <lz4.glsl>
 
-#define BLOCK_COUNT 72
-#define LZ4_BLOCK_COUNT 256
+#define BLOCK_COUNT 32
+#define LZ4_BLOCK_COUNT 216
 
-const int32_t bsz = (1<<20);
+const size_t bsz = (1<<20);
 
-const int32_t compressedBlocksCount = ((LZ4_BLOCK_COUNT+1) * (1<<22)) / 4;
+
+const ptr_t compressedBlocksCount = (2*(LZ4_BLOCK_COUNT+1) * (1<<22)) / 4;
 const stringArray compressedBlocks = (compressedBlocksCount + 1) + stringArray(0, 18000);
 
-const int32_t uncompressedLengths = compressedBlocks.y;
+const ptr_t uncompressedLengths = compressedBlocks.y;
 
-const string readBuffer = string(0, BLOCK_COUNT*bsz);
+const string readBuffer = string(0, (LZ4_BLOCK_COUNT+1) * (1<<22));
 
 #define IsLastBlock io_pad_5
 #define ReadCount io_pad_4
 #define ReadBarrier io_pad_3
 #define WriteLength io_pad_6
+#define ReadHeapOffset io_pad_7
+#define StopReading io_pad_8
+#define ReadOffset io_pad_12
 
-shared int64_t writeLength;
 
 void main() {
 
     string filename = aGet(argv, 1);
 
-    int64_t readOffset = 0, parseOffset = 0;
+    int64_t parseOffset = 0;
     uint32_t blockLength = 0;
 
     LZ4FrameHeader header;
@@ -48,11 +55,12 @@ void main() {
     if (ThreadId == 0) {
         ReadCount = 0;
         ReadBarrier = 0;
+        ReadOffset = 0;
         programReturnValue = 0;
     }
     while(programReturnValue != 0);
     bool firstBlock = true;
-    
+
     barrier();
 
     uint32_t contentChecksum = 0;
@@ -62,100 +70,102 @@ void main() {
 
     while (ReadCount == 0) {
         barrier(); memoryBarrier();
-        if (ThreadLocalId == 0) {
-            heapPtr = TotalHeapSize - 4096*ThreadGroupId;
-            fromIOPtr = ThreadGroupId*bsz;
-            toIOPtr = TotalToIOSize - 4096*ThreadGroupId;
+        StopReading = 0;
+        ReadHeapOffset = 0;
+        int32_t blockCount = 0;
+        while (StopReading == 0) {
+            if (ThreadLocalId == 0 && ThreadGroupId < BLOCK_COUNT) {
+                heapPtr = TotalHeapSize - 4096*(ThreadGroupId+1);
+                fromIOPtr = ThreadGroupId*bsz;
+                toIOPtr = TotalToIOSize - 4096*(ThreadGroupId+1);
 
-            int readBlockCount = 0;
-            io ios[BLOCK_COUNT];
-            FREE_IO(
-                for (int i=ThreadGroupId; i < BLOCK_COUNT; i+=ThreadGroupCount, fromIOPtr += (ThreadGroupCount-1)*bsz) {
-                    ios[readBlockCount++] = read(filename, readOffset+int64_t(ThreadGroupId*bsz), bsz, string(i*bsz, (i+1)*bsz));
-                    readOffset += bsz * min(BLOCK_COUNT, ThreadGroupCount);
+                io r;
+                FREE_ALL(r = read(filename, ReadOffset + int64_t(ThreadGroupId*bsz), bsz, string(ThreadGroupId*bsz, (ThreadGroupId+1)*bsz)));
+                string compressed = awaitIO(r, true);
+                atomicAdd(ReadCount, strLen(compressed));
+            }
+            if (atomicAdd(programReturnValue, 1) == 0) { while (programReturnValue < ThreadCount); programReturnValue = 0; } while (programReturnValue != 0);
+            for (int i = ThreadId + ReadHeapOffset/16, j = ThreadId; j < (ReadCount/16)+1; j+=ThreadCount, i+=ThreadCount) {
+                i64v2heap[i] = i64v2fromIO[j];
+            }
+            memoryBarrier();barrier();
+            atomicAdd(programReturnValue, 1);
+            if (ThreadId == 0) {
+                while (programReturnValue < ThreadCount);
+
+                ReadHeapOffset += ReadCount;
+                ReadOffset += ReadCount;
+
+//                FREE_ALL(log(concat("ReadOffset ", str(ReadOffset))));
+//                FREE_ALL(log(concat("reads done ", str(ReadCount), " / ", str(bsz * BLOCK_COUNT))));
+
+                if (!firstBlock) awaitIO(writeIO);
+                if (firstBlock) {
+                    parseOffset = readLZ4FrameHeaderFromHeap(0, header, error);
+//                    FREE_ALL(log(concat("parse offset ", str(parseOffset))));
+                    firstBlock = false;
+                    blockLength = 1;
                 }
-                for (int i = 0; i < readBlockCount; i++) {
-                    string compressed = awaitIO(ios[i], true);
-                    if (strLen(compressed) > 0) {
-                        atomicAdd(ReadCount, 1);
+//                FREE_ALL(log(concat("ReadHeapOffset ", str(ReadHeapOffset))));
+                while (int32_t(parseOffset) < ReadHeapOffset && blockLength > 0) {
+                    blockLength = readU32heap(int32_t(parseOffset));
+                    bool isCompressed = !getBit(blockLength, 31);
+                    blockLength = unsetBit(blockLength, 31);
+
+//                    FREE_ALL(log(concat("blen: ", str((isCompressed ? 1 : -1) * blockLength), " poff: ", str(parseOffset))));
+                    parseOffset += 4;
+                    if (blockLength > (1<<22)) { FREE_ALL(log("Block length broken.")); break; }
+                    aSet(compressedBlocks, blockCount++, string(parseOffset, int32_t(parseOffset + blockLength) * (isCompressed ? 1 : -1)));
+                    parseOffset += blockLength;
+                    totalLen += blockLength;
+                    if (blockCount == LZ4_BLOCK_COUNT) {
+                        break;
                     }
                 }
-            )
+                if (parseOffset > ReadHeapOffset) {
+                    fromIOPtr = ReadHeapOffset;
+                    ptr_t len = ptr_t(parseOffset - int64_t(ReadHeapOffset));
+//                    FREE_ALL(log(concat("supplemental read: ", str(ivec3(ReadOffset, ReadHeapOffset, len)))));
+                    readSync(filename, ReadOffset, len, ReadHeapOffset + string(0, len));
+                }
+//                FREE_ALL(log(concat("block count: ", str(blockCount))));
+                if (blockCount >= LZ4_BLOCK_COUNT || ReadCount != bsz * BLOCK_COUNT || ReadHeapOffset+bsz*BLOCK_COUNT > readBuffer.y) {
+//                    FREE_ALL(log("stop reading"));
+                    ReadOffset -= (ReadHeapOffset - parseOffset);
+                    parseOffset = 0;
+                    StopReading = 1;
+                }
+
+                i32heap[compressedBlocksCount] = blockCount;
+//                if (blockLength == 0) FREE_ALL(log(concat("Total compressed length: ", str(totalLen))));
+                ReadCount = (ReadCount == bsz*BLOCK_COUNT || blockCount == LZ4_BLOCK_COUNT) ? 0 : 1;
+
+                IsLastBlock = blockCount == 0 ? 1 : 0;
+                programReturnValue = 0;
+            }
+            while (programReturnValue != 0);
         }
-        atomicAdd(programReturnValue, 1);
-        barrier();
-        if (ThreadId == 0) {
-            while (programReturnValue < ThreadCount);
 
-            int32_t blockCount = 0;
-
-            //log(concat("reads done ", str(ReadCount), " / ", str(BLOCK_COUNT)));
-
-            if (!firstBlock) awaitIO(writeIO);
-            if (firstBlock) {
-                parseOffset = readLZ4FrameHeaderFromIO(0, header, error);
-                firstBlock = false;
-                blockLength = 1;
-            }
-            while (parseOffset < int64_t(BLOCK_COUNT * bsz) && blockLength > 0) {
-                blockLength = readU32fromIO(int32_t(parseOffset));
-                bool isCompressed = !getBit(blockLength, 31);
-                blockLength = unsetBit(blockLength, 31);
-
-                //FREE(FREE_IO(log(concat("blen: ", str((isCompressed ? 1 : -1) * blockLength), " poff: ", str(parseOffset)))));
-                parseOffset += 4;
-                if (blockLength > (1<<22)) { log("Block length broken."); break; }
-                aSet(compressedBlocks, blockCount++, string(parseOffset, int32_t(parseOffset + blockLength) * (isCompressed ? 1 : -1)));
-                parseOffset += blockLength;
-                totalLen += blockLength;
-            }
-            if (parseOffset > int64_t(BLOCK_COUNT*bsz)) {
-                fromIOPtr = ptr_t(BLOCK_COUNT*bsz);
-                size_t len = size_t(parseOffset - int64_t(BLOCK_COUNT*bsz));
-                //FREE(FREE_IO(log(concat("fill read to: ", str(ivec2(fromIOPtr, len)), " readOffset: ", str(readOffset)))));
-                awaitIO(read(filename, readOffset, len, string(fromIOPtr, fromIOPtr+len)), true);
-            }
-
-            i32heap[compressedBlocksCount] = blockCount;
-            //FREE(FREE_IO(log(concat("block count: ", str(blockCount)))));
-            //if (ReadCount != BLOCK_COUNT) FREE(FREE_IO(log(concat("Total compressed length: ", str(totalLen)))));
-            //if (blockLength == 0) FREE(FREE_IO(log(concat("Total compressed length: ", str(totalLen)))));
-            ReadCount = ReadCount == BLOCK_COUNT ? 0 : 1;
-
-            parseOffset = parseOffset % (BLOCK_COUNT * bsz);
-
-            IsLastBlock = blockCount == 0 ? 1 : 0;
-            programReturnValue = 0;
-        }
-        while (programReturnValue != 0);
-
-        barrier();
-        int32_t blockCount = i32heap[compressedBlocksCount];
+        barrier(); memoryBarrier();
+        blockCount = i32heap[compressedBlocksCount];
 
         int j = ThreadId / LZ4_GROUP_SIZE;
         while(IsLastBlock == 0) {
-        FREE(FREE_IO(
             for (int i = ThreadId / LZ4_GROUP_SIZE; j < blockCount && i < LZ4_BLOCK_COUNT; i += (ThreadCount / LZ4_GROUP_SIZE), j += (ThreadCount / LZ4_GROUP_SIZE)) {
-//                continue;
                 string compressed = aGet(compressedBlocks,j);
-                if (compressed.y < 0) {
+                if (compressed.y < 0) { // Block without compression
                     compressed.y = abs(compressed.y);
-//                    parMemcpyFromIOToHeap(compressed.x, i*(1<<22), (1<<22), LZ4_GROUP_SIZE, ThreadId % LZ4_GROUP_SIZE);
-                    parMemcpyFromIOToHeap(compressed.x, i*(1<<22), strLen(compressed), LZ4_GROUP_SIZE, ThreadId % LZ4_GROUP_SIZE);
+                    parMemcpyFromHeapToHeap(compressed.x, readBuffer.y + i*(1<<22), strLen(compressed), LZ4_GROUP_SIZE, ThreadId % LZ4_GROUP_SIZE);
                     if (ThreadId % LZ4_GROUP_SIZE == 0) i32heap[uncompressedLengths + i] = strLen(compressed);
-                } else {
-                    ptr_t writeEndPtr = lz4DecompressBlockFromIOToHeap(compressed, string(i*(1<<22), (i+1)*(1<<22)));
+                } else { // Compressed block
+                    ptr_t writeEndPtr = lz4DecompressBlockFromHeapToHeap(compressed, readBuffer.y + (1<<22) * string(i, i+1), LZ4Literals, LZ4Matches);
                     if (ThreadId % LZ4_GROUP_SIZE == 0) {
-                        i32heap[uncompressedLengths + i] = writeEndPtr - (i*(1<<22));
-                        //if ((1<<22) != i32heap[uncompressedLengths + i])
-                        //   FREE(FREE_IO(eprintln(str( ivec4( j, blockCount, i*(1<<22), writeEndPtr-(i*(1<<22)) ) ))));
-                        
+                        i32heap[uncompressedLengths + i] = writeEndPtr - (readBuffer.y + (i*(1<<22)));
                     }
-                    //if (ThreadId % LZ4_GROUP_SIZE == 0) FREE(FREE_IO(eprintln(str( ivec4( j, blockCount, i*(1<<22), writeEndPtr-(i*(1<<22)) ) ))));
                 }
+                barrier(); memoryBarrier();
             }
             atomicAdd(ReadBarrier, 1);
-            barrier();
             if (ThreadId == 0) {
                 while (ReadBarrier < ThreadCount);
 
@@ -169,7 +179,7 @@ void main() {
                 for (int i = 0; i < len; i++) {
                     uncompressedLen += i32heap[uncompressedLengths + i];
                 }
-                //FREE(FREE_IO(log(concat("Uncompressed ", str(len), " blocks to ", str(uncompressedLen)))));
+//                FREE_ALL(log(concat("Uncompressed ", str(len), " blocks to ", str(uncompressedLen))));
                 totalUncompressedLen += uncompressedLen;
 
                 WriteLength = int32_t(uncompressedLen);
@@ -179,25 +189,25 @@ void main() {
             }
             while (ReadBarrier != 0);
             barrier(); memoryBarrier();
-            for (int32_t i = ThreadId; i <= WriteLength / 16; i += ThreadCount) {
-                i64v2toIO[i] = i64v2heap[i];
+            if (ThreadId < 16*32) for (int32_t i = ThreadId, l = (WriteLength+15)/16; i < l; i += 16*32) {
+                i64v2toIO[i] = i64v2heap[i + readBuffer.y / 16];
             }
-            barrier();
+            barrier(); memoryBarrier();
             if (ThreadLocalId == 0) atomicAdd(ReadBarrier, 1);
             if (ThreadId == 0) {
                 while (ReadBarrier < ThreadGroupCount);
+                awaitIO(writeIO);
                 writeIO = write(stdout, -1, size_t(WriteLength), string(0, size_t(WriteLength)), false);
                 ReadBarrier = 0;
             }
             while (ReadBarrier != 0);
             barrier();
-        ))
         }
         barrier(); memoryBarrier();
     }
     if (ThreadId == 0 && !firstBlock) {
         awaitIO(writeIO);
-        //log(concat("Total uncompressed size: ", str(totalUncompressedLen)));
+//        FREE_ALL(log(concat("Total uncompressed size: ", str(totalUncompressedLen))));
     }
 }
 
@@ -205,6 +215,96 @@ void main() {
 
 
 
+    /*
+        Refactor for performance:
+        ===
+
+        Goals:
+        ---
+
+        - [x] Process 256 blocks at a time
+            - [x] Copy loaded blocks from fromIO to heap
+            - [x] Parse compressed block offsets
+            - [x] Stop when compressed block count is 256
+            - [x] Rewind read offset to the end of block 256 (1 block takes as long to decompress as 72, so small tails can have perf impact)
+
+        - [ ] Process 512 blocks at a time
+            - [ ] Shift to using int64_t for pointers to do 512 blocks at a time (needs 4 GB ram for blocks)
+
+        - [x] Improve block decompressor performance in lz4.glsl
+            - [x] Make better use of local thread group
+                - [x] Parse block to find literal offsets
+                - [x] Splat literals at correct positions in parallel
+                - [x] Run sequential match fill pass
+            - [x] Use 4/8-byte copies where possible => No benefit
+                - [x] Unaligned load
+                - [x] Unaligned store
+                - [x] Masked versions to do arbitrary byte length load/store
+
+
+        Apply learnings to library design:
+        ===
+
+        Based on writing Grep, DeLZ4, PCIe LZ4 compression and IO experiments, how would you change or re-design the library?
+        Write a network server at least, then figure out more.
+
+        1. Shift to 64-bit pointers to use full memory capacity
+        2. Make it easy to write stream processors, like UNIX pipes with a defined level of parallelism: (read[32] | parse)[256] | process[256] | write
+        3. Helpers for global barriers, mutexed global arrays
+        4. Memcpy between GPU-CPU and GPU-GPU have different optimal levels of parallelism (GPU-CPU = 16*32 threads copying 16 bytes at a time, GPU-GPU = lots of threads 16 bytes at a time)
+        
+
+        - [ ] IO library changes
+            - Streaming writes
+            - Scatter writes
+            - Gather reads
+            - Streaming reads
+            - In-memory processing focus :?
+
+        - [ ] Runtime design
+            - [ ] Dealing with long-running processes
+            - [ ] Helpers for storing and loading program state
+
+        - [ ] Array library
+            - [ ] Arrays on IO heaps
+
+        - [ ] String library
+            - [ ] Strings on IO heaps
+            - [ ] Operator overloading for "foo" + "bar"
+            - [ ] print macro that casts args to strings
+            - [ ] printf :(
+
+        - [ ] Concurrency primitives
+            - [ ] Locks & barriers (device-wide barriers)
+            - [ ] The multi-reader-multi-processor-multi-writer approach from the bottom of the file
+            - [ ] Parallel reduction
+            - [ ] Serial reduction
+            - [ ] Contract scope of execution
+            - [ ] Widen scope
+
+        - [ ] Redo memory library design
+            - [ ] Make it easier to use the lib correctly and fast (fromIO buffer overwrites, manual heap pointer manipulation, etc. ugh stuff)
+                - [ ] Debug logs shouldn't screw up heap and ongoing IO processes
+            - [ ] Fast single-thread & group & program -wide memcpy functions
+            - [ ] Write pseudo-code version of program that works like you'd like it to
+            - [ ] Non-string heap arrays
+            - [ ] Port mimalloc to GLSL to have a proper malloc
+            - 3 types of buffers:
+                1. GPU heap (GPU-local, cached)
+                2. toIO (GPU-local, volatile, accessible by CPU)
+                3. fromIO (CPU-local, accessible by GPU)
+            - Allocation usage differs
+                - Heap allocs are more or less user-controlled => Not many surprises even when messing with heapPtr
+                - IO allocs happen during IO function calls (copying filename to toIO, copying data to/from IO) => Need to be careful with IO calls after doing custom toIOPtr / fromIOPtr
+                - Three types of buffer use:
+                    1. Thread-local allocations
+                    2. Group-local allocations
+                    3. Global allocations
+                - Now all are using the same memory => clashes when e.g. a part of global area is overwritten by one thread doing logging from its own heap slice
+                    => Separate the heaps
+                - Overflowing the heap causes silent corruption
+                    => Heap guards in malloc
+    */
 
     /*
     shared string compressed;
@@ -235,7 +335,7 @@ void main() {
                     blockOffsets[compressedBlocks[i].block+1] = blockOffsets[compressedBlocks[i].block] + blockLen;
                     compressedBlockAvailable[i] = Full;
                 }
-                if (pollIO(writeIOs[i])) { 
+                if (pollIO(writeIOs[i])) {
                     awaitIO(writeIOs[i]);
                     decompressedBlockAvailable[i] = Empty;
                 }
@@ -265,3 +365,115 @@ void main() {
     }
     */
 
+/*
+
+Pseudocode version to aid language design
+===
+
+Shape: {{#|-}#|-}
+
+{ loop
+    { loop (read 256 blocks of compressed data)
+        # threadgroup parallel (read compressed data)
+        | all threads (copy compressed data to GPU heap)
+        - single thread (find block boundaries in compressed data)
+    }
+    # threadgroup parallel (decompress compressed blocks)
+    | all threads (copy decompressed data to CPU)
+    - single thread (write decompressed data to stdout)
+}
+
+
+alloc_t parseBlock(alloc_t readBuffer, inout LZ4Header header, out int64_t remaining) {
+    uint32_t blockLength = readU32(readBuffer, header.parseOffset - header.readOffset);
+    header.parseOffset += 4;
+    alloc_t block = header.parseOffset + alloc_t(0, blockLength);
+    header.parseOffset += blockLength;
+    remaining = max(0, (header.parseOffset - header.readOffset) - strLen(readBuffer));
+    return block;
+}
+
+allocArray readBlocks(File file, int blockCount, inout LZ4Header header) {
+    global allocArray blocks = allocArrayWithSize(blockCount);
+    global done = 0;
+    for (int i = 0; i < blockCount && done == 0;) {
+        alloc_t readBuffer = readSync(file, readSize);
+        single {
+            if (strLen(readBuffer) < readSize) done = 1;
+            if (!header.initialized) header = parseLZ4Header(readBuffer);
+            for (; i < blockCount; i++) {
+                int64_t remaining = 0;
+                alloc_t block = parseBlock(readBuffer, header, remaining);
+                if (remaining > 0) {
+                    alloc_t rest = readSync(file, remaining);
+                    block = concat(block, rest);
+                    break;
+                }
+                allocArrayPush(blocks, block);
+                if (strLen(block) == 0) {
+                    done = 1;
+                    break;
+                }
+            }
+        }
+        globalBarrier();
+    }
+    return blocks;
+}
+
+alloc_t decompressBlocks(allocArray blocks, allocArray targets, LZ4Header header) {
+    if (ThreadGroupId < arrLen(blocks)) {
+        lz4DecompressBlock(aGet(blocks, ThreadGroupId), aGet(targets, ThreadGroupId), header);
+    }
+    globalBarrier();
+}
+
+
+LZ4Header header;
+File file = openSync(filename, "r");
+
+while (!file.eof) {
+    allocArray blocks = readBlocks(file, 256, header);
+    alloc_t decompressed = decompressBlocks(blocks, header);
+    writeSync(stdout, decompressed);
+}
+
+
+
+
+int64_t readOffset = 0;
+int64_t blockOffset = 0;
+int64_t parseOffset = 0;
+int64_t readSize = 72 Mi;
+int64_t blockLength = 0;
+bool blockReadDone = false;
+int32_t blockCount = 0;
+bool firstBlock = false;
+const int32_t MaxBlockCount = 256;
+
+while (!blockReadDone) {
+    int64_t readLength = readSync(filename, readOffset, readSize, globalHeap + blockOffset);
+    readOffset += readLength;
+    processingDone = readLength < readSize;
+    single {
+        if (firstBlock) {
+            parseOffset = readHeader(globalHeap + blockOffset);
+            firstBlock = false;
+        }
+        while (parseOffset < readOffset) {
+            blockLength = readBlockLength(parseOffset);
+            parseOffset += 4;
+            compressedBlocks[blockCount++] = parseOffset + heapSlice(0, blockLength);
+            parseOffset += blockLength;
+            if (blockCount == MaxBlockCount || blockLength == 0) {
+                blockReadDone = true;
+                break;
+            }
+        }
+        if (parseOffset > readOffset) {
+            `
+        }
+    }
+}
+
+*/

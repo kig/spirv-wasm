@@ -29,12 +29,12 @@ layout(std430, binding = 1) volatile buffer ioRequestsBuffer {
     int32_t io_pad_9;
     int32_t io_pad_10;
     int32_t io_pad_11;
-    int32_t io_pad_12;
-    int32_t io_pad_13;
-    int32_t io_pad_14;
-    int32_t io_pad_15;
+    int64_t io_pad_12;
+    //int32_t io_pad_13;
+    int64_t io_pad_14;
+    //int32_t io_pad_15;
 
-    ioRequest ioRequests[]; 
+    ioRequest ioRequests[];
 };
 
 layout(std430, binding = 2) volatile buffer fromIOBuffer { char fromIO[]; };
@@ -57,6 +57,7 @@ layout(std430, binding = 3) buffer f64m42toIOBuffer { f64mat4x2 f64m42toIO[]; };
 layout(std430, binding = 3) buffer f64m4toIOBuffer { f64mat4 f64m4toIO[]; };
 
 #define FREE_IO(f) { ptr_t _ihp_ = fromIOPtr, _thp_ = toIOPtr; f; fromIOPtr = _ihp_; toIOPtr = _thp_; }
+#define FREE_ALL(f) FREE(FREE_IO(f))
 
 const string stdin = string(0, 0);
 const string stdout = string(1, 0);
@@ -163,7 +164,7 @@ io requestIO(ioRequest request, bool needToCopyDataToIO) {
 
     // Wait for possible previous IO to complete :<
     while(ioRequests[reqNum].status != IO_NONE && ioRequests[reqNum].status < IO_COMPLETE);
-    
+
     ioRequests[reqNum] = request;
     token.index = reqNum;
     return token;
