@@ -20,8 +20,8 @@ layout(std430, binding = 1) volatile buffer ioRequestsBuffer {
     int32_t ioCount;
     int32_t programReturnValue;
     int32_t maxIOCount;
-    int32_t io_pad_3;
-    int32_t io_pad_4;
+    int32_t runCount;
+    int32_t rerunProgram;
     int32_t io_pad_5;
     int32_t io_pad_6;
     int32_t io_pad_7;
@@ -143,7 +143,7 @@ io requestIO(ioRequest request, bool needToCopyDataToIO) {
     if (strLen(request.filename) > 0) {
         request.filename = copyHeapToIO(request.filename, toIOMalloc(strLen(request.filename)));
     }
-    if (request.count > 0 && (request.ioType == IO_READ || request.ioType == IO_LS || request.ioType == IO_GETCWD || request.ioType == IO_DLOPEN)) {
+    if (request.count > 0 && (request.ioType == IO_READ || request.ioType == IO_READLINE || request.ioType == IO_LS || request.ioType == IO_GETCWD || request.ioType == IO_DLOPEN)) {
         request.data = fromIOMalloc(size_t(strLen(request.data)));
         request.data.y = -1;
     } else if (request.count > 0 && (request.ioType == IO_WRITE || request.ioType == IO_COPY)) {
@@ -174,6 +174,12 @@ io requestIO(ioRequest request) {
     return requestIO(request, true);
 }
 
+bool pollIO(io ioReq) {
+    return (
+        ioRequests[ioReq.index].status >= IO_COMPLETE && ioRequests[ioReq.index].data.y != -1
+    );
+}
+
 alloc_t awaitIO(io ioReq, inout int32_t status, bool noCopy, out size_t ioCount, out bool compressed) {
     if (ioRequests[ioReq.index].status != IO_NONE) {
         while (ioRequests[ioReq.index].status < IO_COMPLETE ||
@@ -196,9 +202,9 @@ alloc_t awaitIO(io ioReq, inout int32_t status, bool noCopy, out size_t ioCount,
             heapPtr = fromIndexPtr(res.y);
             ptr_t p = req.data.x;
             for (int i = 0; i < req.offset; i++) {
-                int32_t len = int32_t(fromIO[p]) 
-                            | (int32_t(fromIO[p+1]) << 8) 
-                            | (int32_t(fromIO[p+2]) << 16) 
+                int32_t len = int32_t(fromIO[p])
+                            | (int32_t(fromIO[p+1]) << 8)
+                            | (int32_t(fromIO[p+2]) << 16)
                             | (int32_t(fromIO[p+3]) << 24)
                             ;
                 p += 4;
@@ -220,7 +226,7 @@ alloc_t awaitIO(io ioReq, inout int32_t status, bool noCopy, out size_t ioCount,
 
     alloc_t s;
     // Leave data in the IO buffer if the noCopy flag is set or if the IO is not one that returns data.
-    if (noCopy || !(req.ioType == IO_READ || req.ioType == IO_GETCWD || req.ioType == IO_STAT || req.ioType == IO_DLOPEN)) {
+    if (noCopy || !(req.ioType == IO_READ || req.ioType == IO_READLINE || req.ioType == IO_GETCWD || req.ioType == IO_STAT || req.ioType == IO_DLOPEN)) {
         s = req.data;
     } else {
         s = alloc_t(ioReq.heapBufStart, ioReq.heapBufStart + strLen(req.data));
@@ -268,6 +274,14 @@ io read(string filename, int64_t offset, size_t count, string buf, int32_t compr
 
 io read(string filename, string buf) {
     return read(filename, 0, strLen(buf), buf);
+}
+
+io readLine(string filename, size_t count, string buf) {
+    return requestIO(ioRequest(IO_READLINE, IO_START, 0, min(count, strLen(buf)), filename, buf, 0,0, string(0,0), 0,0));
+}
+
+io readLine(string filename, string buf) {
+    return readLine(filename, strLen(buf), buf);
 }
 
 io write(string filename, int64_t offset, size_t count, string buf, bool needToCopyDataToIO) {

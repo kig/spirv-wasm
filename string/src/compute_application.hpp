@@ -12,6 +12,7 @@
 #include <unistd.h>
 #include <mutex>
 #include <map>
+#include <atomic>
 #include <filesystem>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -95,8 +96,8 @@ struct ioRequests {
     int32_t ioCount;
     int32_t programReturnValue;
     int32_t maxIOCount;
-    int32_t _pad3;
-    int32_t _pad4;
+    int32_t runCount;
+    int32_t rerunProgram;
     int32_t _pad5;
     int32_t _pad6;
     int32_t _pad7;
@@ -114,7 +115,7 @@ struct ioRequests {
 
 static std::mutex completed_mutex;
 static std::mutex fileCache_mutex;
-
+static std::atomic<int64_t> IOProgressCount(0);
 
 class ComputeApplication
 {
@@ -307,12 +308,16 @@ class ComputeApplication
             heap_ptr += len;
             heapPtr += len;
         }
+        bufferCopy(heapBuffer, heapGlobalsOffset-8, toGPUBuffer, 0, heapGlobalsSize);
+//            VkBufferCopy copyRegion{ .srcOffset = 0, .dstOffset = heapGlobalsOffset-8, .size = heapGlobalsSize };
+//            vkCmdCopyBuffer(commandBuffer, toGPUBuffer, heapBuffer, 1, &copyRegion);
         timeIval("Write argv and globals to GPU");
 
         ioReqs->ioCount = 0;
         ioReqs->programReturnValue = 0;
         ioReqs->maxIOCount = IO_REQUEST_COUNT;
-
+        ioReqs->runCount = 0;
+        ioReqs->rerunProgram = RERUN_NOW;
 
         std::thread ioThread;
 
@@ -321,7 +326,17 @@ class ComputeApplication
             timeIval("Start IO thread");
         }
 
-        runProgram();
+        while (ioReqs->rerunProgram != NO_RERUN) {
+            ioReqs->rerunProgram = 0;
+            int64_t prevIOProgressCount = IOProgressCount;
+            runProgram();
+            ioReqs->runCount++;
+            if (ioReqs->rerunProgram == RERUN_ON_IO) {
+                while (prevIOProgressCount == IOProgressCount) {
+                    std::this_thread::sleep_for(std::chrono::microseconds(10));
+                }
+            }
+        }
 
         timeIval("Run program");
 
@@ -952,9 +967,6 @@ class ComputeApplication
         VkCommandBufferBeginInfo beginInfo = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, .flags = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT};
         VK_CHECK_RESULT(vkBeginCommandBuffer(commandBuffer, &beginInfo));
 
-            VkBufferCopy copyRegion{ .srcOffset = 0, .dstOffset = heapGlobalsOffset-8, .size = heapGlobalsSize };
-            vkCmdCopyBuffer(commandBuffer, toGPUBuffer, heapBuffer, 1, &copyRegion);
-
             /*
             We need to bind a pipeline, AND a descriptor set before we dispatch.
             The validation layer will NOT give warnings if you forget these, so be very careful not to forget them.
@@ -1046,6 +1058,10 @@ class ComputeApplication
         timeIval("vkDestroyDevice");
         vkDestroyInstance(instance, NULL);
         timeIval("vkDestroyInstance");
+    }
+
+    static void signalIOProgress() {
+        IOProgressCount++;
     }
 
     static FILE* openFile(char *filename, FILE* file, const char* flags) {
@@ -1145,6 +1161,7 @@ class ComputeApplication
                             bytes += output.pos;
                             finished = lastChunk ? (remaining == 0) : (input.pos == input.size);
                             volatileReqs[i].progress = bytes;
+                            signalIOProgress();
                         } while (!finished);
                         if (lastChunk) break;
                     }
@@ -1202,6 +1219,7 @@ class ComputeApplication
                                         memcpy(toGPUBuf + req.result_start, inpPtr, inpBytes);
                                         volatileReqs[i].compression = 0;
                                         volatileReqs[i].progress = inpBytes;
+                                        signalIOProgress();
                                         bytes = inpBytes;
                                         doUncompressedRead = true;
                                         break;
@@ -1227,6 +1245,7 @@ class ComputeApplication
                                 blockBytes = 0;
                                 blockOff += 4;
                                 volatileReqs[i].progress = bytes;
+                                signalIOProgress();
                                 LZ4_resetStream_fast(lz4Stream);
                             }
                             inpBufIndex = (inpBufIndex + 1) % 2;
@@ -1250,6 +1269,7 @@ class ComputeApplication
                             memcpy(toGPUBuf + req.result_start + bytes, cmpBuf, cmpBytes);
                             bytes += cmpBytes;
                             volatileReqs[i].progress = bytes;
+                            signalIOProgress();
                             inpBufIndex = (inpBufIndex + 1) % 2;
                         }
                         if (verbose && totalRead > 0) fprintf(stderr, "Compression ratio: %.4f\n", (float)bytes/totalRead);
@@ -1294,6 +1314,7 @@ class ComputeApplication
                             memcpy(toGPUBuf + req.result_start + count_out, outBuff, headerSize);
                             count_out = headerSize;
                             volatileReqs[i].progress = count_out;
+                            signalIOProgress();
                             if (verbose) fprintf(stderr, "Buffer size is %u bytes, header size %u bytes \n",
                                     (unsigned)outCapacity, (unsigned)headerSize);
                         }
@@ -1317,6 +1338,7 @@ class ComputeApplication
                             memcpy(toGPUBuf + req.result_start + count_out, outBuff, compressedSize);
                             count_out += compressedSize;
                             volatileReqs[i].progress = count_out;
+                            signalIOProgress();
                         }
 
                         /* flush whatever remains within internal buffers */
@@ -1332,6 +1354,7 @@ class ComputeApplication
                             memcpy(toGPUBuf + req.result_start + count_out, outBuff, compressedSize);
                             count_out += compressedSize;
                             volatileReqs[i].progress = count_out;
+                            signalIOProgress();
                         }
 
                         bytes = count_out;
@@ -1361,6 +1384,7 @@ class ComputeApplication
                     int32_t readBytes = fread(toGPUBuf + req.result_start + bytes, 1, std::min(req.count-bytes, 65536L), fd);
                     bytes += readBytes;
                     volatileReqs[i].progress = bytes;
+                    signalIOProgress();
                     if (readBytes == 0) break;
                 }
                 totalRead = (int64_t)bytes;
@@ -1397,6 +1421,27 @@ class ComputeApplication
             if (file == NULL) closeFile(fd);
             volatileReqs[i].result_end = req.result_start + bytes;
             req.status = IO_COMPLETE;
+
+        } else if (req.ioType == IO_READLINE) {
+            if (file == NULL) {
+                volatileReqs[i].result_end = 0;
+                req.status = IO_ERROR;
+            } else {
+                auto fd = openFile(filename, file, "r");
+                int64_t bytes = 0;
+                while (bytes < req.count) {
+                    uint8_t ch = (uint8_t)fgetc(fd);
+                    if (ch != 10) {
+                        toGPUBuf[req.result_start + bytes] = ch;
+                        bytes++;
+                    } else {
+                        break;
+                    }
+                }
+                volatileReqs[i].count = bytes;
+                volatileReqs[i].result_end = req.result_start + (int32_t)bytes;
+                req.status = IO_COMPLETE;
+            }
 
         } else if (req.ioType == IO_CREATE) {
             // Create new file
@@ -1647,6 +1692,7 @@ class ComputeApplication
             std::lock_guard<std::mutex> guard(completed_mutex);
             completed[threadIdx] = true;
         }
+        signalIOProgress();
     }
 
     static void handleIORequests(ComputeApplication *app, bool verbose, ioRequests *ioReqs, char *toGPUBuf, char *fromGPUBuf, volatile bool *ioRunning, volatile bool *ioReset) {

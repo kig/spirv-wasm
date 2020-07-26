@@ -8,6 +8,11 @@
 #define IO_ERROR 5
 #define IO_HANDLED 255
 
+// Program repetition
+
+#define NO_RERUN 0
+#define RERUN_NOW 1
+#define RERUN_ON_IO 2
 
 // IO compression
 
@@ -37,6 +42,8 @@
 
 // Read from a file at given offset.
 #define IO_READ 1
+// Read a line from a file pointer at current offset.
+#define IO_READLINE 41
 // Write to a file at given offset.
 #define IO_WRITE 2
 // Create new file, optionally write initial data to it.
