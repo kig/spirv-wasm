@@ -158,11 +158,11 @@ ptr_t lz4DecompressBlockFromHeapToHeap(string cmp, string dst, ptr_t LZ4Literals
             litLen += uint32_t(c);
         }
         litIdx++;
-        u32v4heap[LZ4Literals + litIdx-1] = uvec4(i, j, litLen, 0);
+        u32v3heap[LZ4Literals + litIdx-1] = uvec3(i, j, litLen);
         i += litLen;
         j += litLen;
         if (i == be) {
-            u32v4heap[LZ4Matches + litIdx-1] = uvec4(0, 0, 0, 0);
+            u32v3heap[LZ4Matches + litIdx-1] = uvec3(0, 0, 0);
             break; // End of LZ4 chunk
         }
 
@@ -176,37 +176,37 @@ ptr_t lz4DecompressBlockFromHeapToHeap(string cmp, string dst, ptr_t LZ4Literals
             c = u8heap[i++];
             matchLen += uint32_t(c);
         }
-        u32v4heap[LZ4Matches + litIdx-1] = uvec4(j-matchOff, j, matchLen, 0);
+        u32v3heap[LZ4Matches + litIdx-1] = uvec3(j-matchOff, j, matchLen);
         j += matchLen;
 
         if (litIdx == gl_WorkGroupSize.x) {
-            uvec4 lit = u32v4heap[LZ4Literals + gl_LocalInvocationID.x];
+            uvec3 lit = u32v3heap[LZ4Literals + gl_LocalInvocationID.x];
             memcpyFromHeapToHeap(lit.x, lit.y, lit.z);
             barrier();
             for (uint k = 0; k < gl_WorkGroupSize.x; k++) {
-                barrier();
-                uvec4 match = u32v4heap[LZ4Matches + k];
+                uvec3 match = u32v3heap[LZ4Matches + k];
                 uint32_t maxSubSize = min(gl_WorkGroupSize.x, (match.y-match.x));
                 if (gl_LocalInvocationID.x < maxSubSize) {
                     parMemcpyFromHeapToHeap(match.x, match.y, match.z, maxSubSize, gl_LocalInvocationID.x);
                 }
+                barrier();
             }
             litIdx = 0;
         }
     }
     if (litIdx != 0) {
         if (gl_LocalInvocationID.x < litIdx) {
-            uvec4 lit = u32v4heap[LZ4Literals + gl_LocalInvocationID.x];
+            uvec3 lit = u32v3heap[LZ4Literals + gl_LocalInvocationID.x];
             memcpyFromHeapToHeap(lit.x, lit.y, lit.z);
         }
         barrier();
         for (uint k = 0; k < litIdx; k++) {
-            barrier();
-            uvec4 match = u32v4heap[LZ4Matches + k];
+            uvec3 match = u32v3heap[LZ4Matches + k];
             uint32_t maxSubSize = min(gl_WorkGroupSize.x, (match.y-match.x));
             if (gl_LocalInvocationID.x < maxSubSize) {
                 parMemcpyFromHeapToHeap(match.x, match.y, match.z, maxSubSize, gl_LocalInvocationID.x);
             }
+            barrier();
         }
     }
 
