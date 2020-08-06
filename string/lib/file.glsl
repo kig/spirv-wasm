@@ -59,6 +59,9 @@ layout(std430, binding = 3) buffer f64m4toIOBuffer { f64mat4 f64m4toIO[]; };
 #define FREE_IO(f) { ptr_t _ihp_ = fromIOPtr, _thp_ = toIOPtr; f; fromIOPtr = _ihp_; toIOPtr = _thp_; }
 #define FREE_ALL(f) FREE(FREE_IO(f))
 
+#define socket string
+#define file string
+
 const string stdin = string(0, 0);
 const string stdout = string(1, 0);
 const string stderr = string(2, 0);
@@ -136,6 +139,18 @@ COPYFUNC(copyHeapToIO, heap, toIO)
 
 COPYFUNC(copyFromIOToHeap, fromIO, heap)
 
+bool isReadIOType(int32_t ioType) {
+    return (ioType == IO_READ || ioType == IO_READLINE || ioType == IO_LS || ioType == IO_GETCWD || ioType == IO_STAT || ioType == IO_DLOPEN || ioType == IO_RECV);
+}
+
+bool isWriteIOType(int32_t ioType) {
+    return (ioType == IO_WRITE || ioType == IO_COPY || ioType == IO_SEND);
+}
+
+bool isReadWriteIOType(int32_t ioType) {
+    return (ioType == IO_DLCALL || ioType == IO_ACCEPT);
+}
+
 io requestIO(ioRequest request, bool needToCopyDataToIO) {
     io token = io(0, request.data.x);
     memoryBarrier();
@@ -143,14 +158,14 @@ io requestIO(ioRequest request, bool needToCopyDataToIO) {
     if (strLen(request.filename) > 0) {
         request.filename = copyHeapToIO(request.filename, toIOMalloc(strLen(request.filename)));
     }
-    if (request.count > 0 && (request.ioType == IO_READ || request.ioType == IO_READLINE || request.ioType == IO_LS || request.ioType == IO_GETCWD || request.ioType == IO_DLOPEN)) {
+    if (request.count > 0 && isReadIOType(request.ioType)) {
         request.data = fromIOMalloc(size_t(strLen(request.data)));
         request.data.y = -1;
-    } else if (request.count > 0 && (request.ioType == IO_WRITE || request.ioType == IO_COPY)) {
+    } else if (request.count > 0 && isWriteIOType(request.ioType)) {
         if (needToCopyDataToIO) request.data = copyHeapToIO(request.data, toIOMalloc(size_t(request.count)));
         request.data.y = -1;
     }
-    if (request.count > 0 && (request.ioType == IO_DLCALL)) {
+    if (request.count > 0 && isReadWriteIOType(request.ioType)) {
         if (needToCopyDataToIO) request.data = copyHeapToIO(request.data, toIOMalloc(size_t(request.count)));
         request.data.y = -1;
         token.heapBufStart = request.data2.x;
@@ -163,7 +178,8 @@ io requestIO(ioRequest request, bool needToCopyDataToIO) {
     int32_t reqNum = atomicAdd(ioCount, 1) % maxIOCount_cached;
 
     // Wait for possible previous IO to complete :<
-    while(ioRequests[reqNum].status != IO_NONE && ioRequests[reqNum].status < IO_COMPLETE);
+    // This will deadlock if the IO buffer is full of requests and you're not awaiting for them.
+    while(ioRequests[reqNum].status != IO_NONE && ioRequests[reqNum].status != IO_HANDLED);
 
     ioRequests[reqNum] = request;
     token.index = reqNum;
@@ -178,6 +194,14 @@ bool pollIO(io ioReq) {
     return (
         ioRequests[ioReq.index].status >= IO_COMPLETE && ioRequests[ioReq.index].data.y != -1
     );
+}
+
+void awaitAndDiscardIO(io ioReq) {
+    if (ioRequests[ioReq.index].status != IO_NONE) {
+        while (ioRequests[ioReq.index].status < IO_COMPLETE ||
+               ioRequests[ioReq.index].data.y == -1);
+    }
+    ioRequests[ioReq.index].status = IO_HANDLED;
 }
 
 alloc_t awaitIO(io ioReq, inout int32_t status, bool noCopy, out size_t ioCount, out bool compressed) {
@@ -226,7 +250,7 @@ alloc_t awaitIO(io ioReq, inout int32_t status, bool noCopy, out size_t ioCount,
 
     alloc_t s;
     // Leave data in the IO buffer if the noCopy flag is set or if the IO is not one that returns data.
-    if (noCopy || !(req.ioType == IO_READ || req.ioType == IO_READLINE || req.ioType == IO_GETCWD || req.ioType == IO_STAT || req.ioType == IO_DLOPEN)) {
+    if (noCopy || !isReadIOType(req.ioType)) {
         s = req.data;
     } else {
         s = alloc_t(ioReq.heapBufStart, ioReq.heapBufStart + strLen(req.data));
@@ -235,6 +259,24 @@ alloc_t awaitIO(io ioReq, inout int32_t status, bool noCopy, out size_t ioCount,
     ioRequests[ioReq.index].status = IO_HANDLED;
 
     return s;
+}
+
+alloc_t awaitIO2(io ioReq, out string data2) {
+    if (ioRequests[ioReq.index].status != IO_NONE) {
+        while (ioRequests[ioReq.index].status < IO_COMPLETE ||
+               ioRequests[ioReq.index].data.y == -1);
+    }
+
+    ioRequest req = ioRequests[ioReq.index];
+
+    memoryBarrier(gl_ScopeDevice, gl_StorageSemanticsBuffer, gl_SemanticsAcquire);
+
+    alloc_t s = alloc_t(ioReq.heapBufStart, ioReq.heapBufStart + strLen(req.data2));
+    copyFromIOToHeap(req.data2, s);
+    data2 = s;
+    ioRequests[ioReq.index].status = IO_HANDLED;
+
+    return req.data;
 }
 
 alloc_t awaitIO(io request, inout int32_t status) {
@@ -344,17 +386,61 @@ io stat(string filename, alloc_t statBuf) {
     return requestIO(ioRequest(IO_STAT, IO_START, 0, min(strLen(statBuf), StatSize), filename, statBuf, 0,0,string(0,0),0,0));
 }
 
+io microTime() {
+    return requestIO(ioRequest(IO_TIMENOW, IO_START, 0, 0, string(0,0), string(0,0), 0,0,string(0,0),0,0));
+}
+
+int64_t microTimeSync() {
+    io r = microTime();
+    awaitIO(r);
+    return ioRequests[r.index].offset;
+}
+
 io open(string filename) {
     return requestIO(ioRequest(IO_OPEN, IO_START, 0, 0, filename, string(0,0), 0,0,string(0,0),0,0));
 }
 
-io close(int32_t fd) {
-    return requestIO(ioRequest(IO_CLOSE, IO_START, 0, 0, string(fd, 0), string(0,0), 0,0,string(0,0),0,0));
+io close(file fd) {
+    return requestIO(ioRequest(IO_CLOSE, IO_START, 0, 0, fd, string(0,0), 0,0,string(0,0),0,0));
 }
 
 io exit(int32_t exitCode) {
     return requestIO(ioRequest(IO_EXIT, IO_START, exitCode, 0, string(0,0), string(0,0), 0,0,string(0,0),0,0));
 }
+
+
+io listen(int32_t port) {
+    return requestIO(ioRequest(IO_LISTEN, IO_START, port, 0, string(0,0), string(0,0), 0,0,string(0,0),0,0));
+}
+
+io accept(socket sock) {
+    return requestIO(ioRequest(IO_ACCEPT, IO_START, 0, 0, sock, string(0,0), 0,0,string(0,0),0,0), false);
+}
+
+io recv(socket sock, int32_t count, string data) {
+    return requestIO(ioRequest(IO_RECV, IO_START, 0, min(count, strLen(data)), sock, data, 0,0,string(0,0),0,0));
+}
+
+io acceptAndRecv(socket sock, alloc_t recvBuf) {
+    return requestIO(ioRequest(IO_ACCEPT, IO_START, 0, strLen(recvBuf), sock, string(0,0), 0,0, recvBuf, 0,0), false);
+}
+
+
+io send(socket sock, int32_t count, string data) {
+    return requestIO(ioRequest(IO_SEND, IO_START, 0, min(count, strLen(data)), sock, data, 0,0,string(0,0),0,0));
+}
+
+io sendAndClose(socket sock, string data) {
+    return requestIO(ioRequest(IO_SEND, IO_START, 0, strLen(data), sock, data, 0,-1,string(0,0),0,0));
+}
+
+
+socket listenSync(int32_t port) {
+    return awaitIO(listen(port));
+}
+
+
+
 
 alloc_t readSync(string filename, int64_t offset, size_t count) { return awaitIO(read(filename, offset, count, malloc(count))); }
 alloc_t readSync(string filename, int64_t offset, size_t count, string buf) { return awaitIO(read(filename, offset, count, buf)); }
@@ -389,9 +475,9 @@ Stat awaitStat(io request) {
 
 Stat statSync(string filename) {
     Stat st;
-    FREE_IO(FREE(
+    FREE_ALL(
         st = awaitStat(stat(filename, malloc(StatSize)));
-    ))
+    )
     return st;
 }
 

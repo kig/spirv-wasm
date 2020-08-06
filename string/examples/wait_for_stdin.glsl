@@ -1,4 +1,5 @@
 #include <file.glsl>
+#include <statemachine.glsl>
 
 ThreadGroupCount = 1;
 ThreadLocalCount = 1;
@@ -44,6 +45,12 @@ bool pollIO(inout sio r) {
     return res;
 }
 
+
+const int s_Init = 0;
+const int s_Reading = 1;
+
+const int a_Read = 0;
+
 void main() {
     /*
     Why not the way below?
@@ -57,6 +64,27 @@ void main() {
     println(concat("Hello, ", name, "!"));
     */
 
+    stateMachine m = loadStateMachine(s_Init);
+    switch (getState(m)) {
+        case s_Init:
+            println("What's your name?");
+            setAttr(m, a_Read, readLine(stdin, malloc(256)));
+            setState(m, s_Reading);
+            break;
+
+        case s_Reading:
+            io r = getIOAttr(m, a_Read);
+            if (pollIO(r)) {
+                string name = awaitIO(r);
+                println(concat("Hello, ", name, "!"));
+                return; // Done, exit program.
+            }
+            break;
+    }
+    saveStateMachine(m);
+    rerunProgram = RERUN_ON_IO;
+
+/*
     sio r;
     string res = malloc(256);
     if (!loadIO(r, 0)) {
@@ -68,4 +96,5 @@ void main() {
     } else if (storeIO(r, 0)) {
         rerunProgram = RERUN_ON_IO;
     }
+*/
 }

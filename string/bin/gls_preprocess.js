@@ -27,33 +27,22 @@ const totalHeapSize = getMatchingDef("TotalHeapSize", groupHeapSize * threadGrou
 const totalToIOSize = getMatchingDef("TotalToIOSize", groupToIOSize * threadGroupCount);
 const totalFromIOSize = getMatchingDef("TotalFromIOSize", groupFromIOSize * threadGroupCount);
 
-const segments = source.replace(/^# .*/mg, '').split(/("|')/g);
+const segments = source.replace(/^# .*/mg, '').split(/("|'|[fui]\d\d?{|})/g);
 
 let inString = false;
 let inChar = false;
+let inArray = false;
+let arrayType = '';
 let lastSegment = '';
 let stringSegments = [];
+let arraySegments = [];
 
 const output = [];
 
 const globals = [];
+const arrayGlobals = [];
 const globalsOut = [];
 let globalBytes = 0;
-
-// FIXME write the byte data to the heap's global section
-// - [x] Add the string data to the SPIR-V file as a source section
-// - [x] Parse out the string at shader load time, copy to start of heap buffer
-// - [x] Move globals section from end of heap to start of heap
-// - [x] Add command line arguments after the globals
-
-// TODO Shader controls heap size
-// - [x] Parse heap size and workgroup size info from shader add to SPIR-V as a source section
-// - [x] Parse heap size and workgroup size at shader load time to configure runner app
-// - [ ] Add optparse to runner for overriding shader params and setting verbose and timings flags
-
-// - [x] Add #!/usr/bin/gls to top of shader files to run as script
-// - [ ] Include path /usr/lib/script-v/
-// - [ ] Shader cache in ~/.script-v/
 
 for (segment of segments) {
 	if (segment === '"' && lastSegment[lastSegment.length-1] !== '\\') {
@@ -84,6 +73,45 @@ for (segment of segments) {
 		stringSegments = [];
 	} else if (inChar) {
 		stringSegments.push(segment);
+	} else if (/^\S+{$/.test(segment)) {
+	    inArray = true;
+	    arrayType = segment.slice(0,-1);
+    } else if (inArray && segment === '}') {
+        inArray = false;
+		const str = arraySegments.join('');
+		const v = `_array_global_${arrayGlobals.length}_`;
+		output.push(v);
+		let bitSize = parseInt(arrayType.match(/64|32|16|8/)[0]);
+		let elementCount = 1;
+		let byteSize = elementCount * bitSize / 8;
+		// Align on byteSize
+		const newGlobalBytes = Math.ceil(globalBytes / byteSize) * byteSize;
+		globalsOut.push(Buffer.alloc(newGlobalBytes - globalBytes)); // Add padding to global buffer.
+		globalBytes = newGlobalBytes;
+		const sz = byteSize;
+		const arrayElems = str.split(",").filter(s => !/^\s*$/.test(s));
+		const buf = Buffer.alloc(arrayElems.length * byteSize);
+		arrayGlobals.push(`${arrayType}array ${v} = ${arrayType}array((HeapGlobalsOffset + ${globalBytes})/${sz}, (HeapGlobalsOffset + ${globalBytes+buf.byteLength})/${sz});`);
+		let i = 0;
+		arrayElems.forEach((el) => {
+    		switch(arrayType) {
+    		    case 'f32': buf.writeFloatLE(parseFloat(el),i); i+=4; break;
+    		    case 'f64': buf.writeDoubleLE(parseFloat(el),i); i+=8; break;
+    		    case 'i8': buf.writeInt8LE(iparseInt(el),i); i+=1; break;
+    		    case 'i16': buf.writeInt16LE(parseInt(el),i); i+=2; break;
+    		    case 'i32': buf.writeInt32LE(parseInt(el),i); i+=4; break;
+    		    case 'i64': buf.writeBigInt64LE(BigInt(el),i); i+=8; break;
+    		    case 'u8': buf.writeUInt8LE(parseInt(el),i); i+=1; break;
+    		    case 'u16': buf.writeUInt16LE(parseInt(el),i); i+=2; break;
+    		    case 'u32': buf.writeUInt32LE(parseInt(el),i); i+=4; break;
+    		    case 'u64': buf.writeBigUInt64LE(BigInt(el),i); i+=8; break;
+    		}
+		});
+ 		globalBytes += buf.byteLength;
+		globalsOut.push(buf);
+		arraySegments = [];
+	} else if (inArray) {
+		arraySegments.push(segment);
 	} else {
 		output.push(segment);
 	}
@@ -111,7 +139,7 @@ int32_t HeapGlobalsOffset = ${totalHeapSize + 8};
 
 layout ( local_size_x = ${threadLocalCount}, local_size_y = 1, local_size_z = 1 ) in;
 
-` + output.join('').replace('%%GLOBALS%%', globals.join('\n'));
+` + output.join('').replace('%%GLOBALS%%', globals.join('\n')).replace('%%ARRAYGLOBALS%%', arrayGlobals.join('\n'));
 
 // - If shader has no void main() {}, wrap the tail of the file from }(.*)EOF in }\nvoid main() { $1 }
 // FIXME Do this on AST level... Find the last definition (function, struct, etc.) instead of last }

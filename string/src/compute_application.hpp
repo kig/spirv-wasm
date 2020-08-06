@@ -21,6 +21,8 @@
 #include <lz4.h>
 #include <lz4frame.h>
 #include <dlfcn.h>
+#include <sys/socket.h>
+#include <netinet/ip.h>
 
 #include "../lib/io.glsl"
 
@@ -322,7 +324,11 @@ class ComputeApplication
         std::thread ioThread;
 
         if (runIO) {
+            ioReset = true;
             ioThread = std::thread(handleIORequests, this, verbose, ioReqs, (char*)mappedToGPUMemory, (char*)mappedFromGPUMemory, &ioRunning, &ioReset);
+            while (ioReset) {
+                std::this_thread::sleep_for(std::chrono::microseconds(1));
+            } // Wait for ioThread initialization.
             timeIval("Start IO thread");
         }
 
@@ -331,6 +337,8 @@ class ComputeApplication
             int64_t prevIOProgressCount = IOProgressCount;
             runProgram();
             ioReqs->runCount++;
+            // If rerunProgram is set at the end of the program, this may not be set yet on the CPU side.
+            // How to fix?
             if (ioReqs->rerunProgram == RERUN_ON_IO) {
                 while (prevIOProgressCount == IOProgressCount) {
                     std::this_thread::sleep_for(std::chrono::microseconds(10));
@@ -499,7 +507,7 @@ class ComputeApplication
                 throw std::runtime_error("Extension VK_EXT_DEBUG_REPORT_EXTENSION_NAME not supported\n");
             }
             enabledExtensions.push_back(VK_EXT_DEBUG_REPORT_EXTENSION_NAME);
-
+            enabledExtensions.push_back(VK_KHR_SHADER_CLOCK_EXTENSION_NAME);
             timeIval("extensions");
         }
 
@@ -599,15 +607,17 @@ class ComputeApplication
             .queueCount = 2, // One queue for compute, one for buffer copies.
             .pQueuePriorities = &queuePriorities};
 
-        VkPhysicalDeviceFeatures deviceFeatures = {};
+        VkPhysicalDeviceFeatures2 features;
+        vkGetPhysicalDeviceFeatures2(physicalDevice, &features);
 
         VkDeviceCreateInfo deviceCreateInfo = {
             .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+            .pNext = &features,
             .queueCreateInfoCount = 1,
             .pQueueCreateInfos = &queueCreateInfo,
             .enabledLayerCount = static_cast<uint32_t>(enabledLayers.size()),
             .ppEnabledLayerNames = enabledLayers.data(),
-            .pEnabledFeatures = &deviceFeatures,
+            .pEnabledFeatures = NULL,
         };
 
         VK_CHECK_RESULT(vkCreateDevice(physicalDevice, &deviceCreateInfo, NULL, &device));
@@ -1096,6 +1106,7 @@ class ComputeApplication
                 std::lock_guard<std::mutex> guard(fileCache_mutex);
                 file = fileCache->at(req.filename_start);
             }
+        } else if (req.filename_end == -2) {
         } else {
             VkDeviceSize filenameLength = req.filename_end - req.filename_start;
             if (verbose) fprintf(stderr, "Filename length %lu\n", filenameLength);
@@ -1553,6 +1564,8 @@ class ComputeApplication
                 fclose(file);
                 std::lock_guard<std::mutex> guard(fileCache_mutex);
                 fileCache->erase(req.filename_start);
+            } else {
+                close(req.filename_start);
             }
             req.status = IO_COMPLETE;
 
@@ -1648,26 +1661,58 @@ class ComputeApplication
             req.status = IO_COMPLETE;
 
         } else if (req.ioType == IO_LISTEN) {
-            // Start listening for connections on TCP/UDP/Unix socket
-            req.status = IO_ERROR;
+            // Start listening for connections on TCP socket
+            int32_t sockfd = socket(AF_INET, SOCK_STREAM, 0);
+            int opt = 1;
+            setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt, sizeof(opt));
+            struct sockaddr_in address;
+            address.sin_family = AF_INET;
+            address.sin_addr.s_addr = INADDR_ANY;
+            address.sin_port = htons( req.offset );
+            bind(sockfd, (struct sockaddr*)&address, sizeof(address));
+            listen(sockfd, 1024);
+            if (verbose) fprintf(stderr, "IO_LISTEN: fd %d port %ld\n", sockfd, req.offset);
+            volatileReqs[i].result_start = sockfd;
+            volatileReqs[i].result_end = -2;
+            req.status = IO_COMPLETE;
 
         } else if (req.ioType == IO_ACCEPT) {
-            // Accept connection on listening socket - async (CPU tries to fill the workgroup with sockets but might give fewer than workgroup size)
-            req.status = IO_ERROR;
+            // Accept connection on listening socket
+            struct sockaddr_in address;
+            socklen_t addrlen = sizeof(address);
+            int32_t sockfd = accept(req.filename_start, (struct sockaddr*)&address, &addrlen);
+            if (verbose) fprintf(stderr, "IO_ACCEPT: listening socket fd %d -> conn fd %d\n", req.filename_start, sockfd);
+            if (req.count != 0) {
+                int32_t bytes = recv(sockfd, toGPUBuf + req.data2_start, req.count, req.offset);
+                volatileReqs[i].data2_end = req.data2_start + bytes;
+//                fprintf(stderr, "Got data: %.4096s\n", toGPUBuf + req.data2_start);
+            }
+            volatileReqs[i].result_start = sockfd;
+            volatileReqs[i].result_end = -2;
+            req.status = IO_COMPLETE;
 
         } else if (req.ioType == IO_CONNECT) {
             // Connect to a remote server - async (CPU starts creating connections, GPU goes on with its merry business, GPU writes to socket are pipelined on CPU side)
             req.status = IO_ERROR;
 
         } else if (req.ioType == IO_SEND) {
-            // Send data to a socket - async (CPU manages send queues and sends backpressure to GPU)
-            // Can be run with 'udp ' uint32_t uint16_t to fire-and-forget UDP packets
-            // Can be run with 'tcp ' uint32_t uint16_t to start a TCP connection, write to it, optionally read response, and close socket.
-            req.status = IO_ERROR;
+            // Send data to a socket
+            app->readFromGPUIO(req.result_start, req.count);
+            app->readFromGPUIO(req.data2_start, req.data2_end - req.data2_start);
+            int32_t bytes = sendto(req.filename_start, fromGPUBuf + req.result_start, req.count, req.offset, (struct sockaddr*)(fromGPUBuf + req.data2_start), req.data2_end - req.data2_start);
+            volatileReqs[i].result_end = req.result_start + bytes;
+            if (req.progress != 0) {
+                close(req.filename_start);
+            }
+            req.status = IO_COMPLETE;
 
         } else if (req.ioType == IO_RECV) {
-            // Receive data from a socket - returns data only if socket has data
-            req.status = IO_ERROR;
+            // Receive data from a socket
+            socklen_t addrlen = req.data2_end - req.data2_start;
+            int32_t bytes = recvfrom(req.filename_start, toGPUBuf + req.result_start, req.count, req.offset, (struct sockaddr*)(fromGPUBuf + req.data2_start), &addrlen);
+            volatileReqs[i].data2_end = req.data2_start + addrlen;
+            volatileReqs[i].result_end = req.result_start + bytes;
+            req.status = IO_COMPLETE;
 
         } else if (req.ioType == IO_CHROOT) {
             // Chdir to given dir and make it root
@@ -1675,6 +1720,19 @@ class ComputeApplication
             if (result == 0) result = chroot(".");
             volatileReqs[i].result_start = result;
             volatileReqs[i].result_end = 0;
+            req.status = IO_COMPLETE;
+
+        } else if (req.ioType == IO_TIMENOW) {
+            // Get current wallclock time in microseconds since the epoch.
+            // For shader timings, you're probably better off with clockARB() and clockRealtimeEXT()
+            int64_t time_us = std::chrono::time_point_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now()).time_since_epoch().count();
+            volatileReqs[i].offset = time_us;
+            if (req.count >= 8) {
+                *((int64_t*)(toGPUBuf + req.result_start)) = time_us;
+                volatileReqs[i].result_end = req.result_start + req.result_end;
+            } else {
+                volatileReqs[i].result_end = 0;
+            }
             req.status = IO_COMPLETE;
 
         } else if (req.ioType == IO_EXIT) {
@@ -1719,7 +1777,9 @@ class ComputeApplication
             if (reqNum < lastReqNum) {
                 for (int32_t i = lastReqNum; i < IO_REQUEST_COUNT; i++) {
                     if (verbose) fprintf(stderr, "Got IO request %d\n", i);
-                    if (volatileReqs[i].ioType == IO_READ) {
+                    if (volatileReqs[i].ioType == IO_ACCEPT) {
+                        std::thread(handleIORequest, app, verbose, ioReqs, toGPUBuf, fromGPUBuf, i, completed, -1, &fileCache).detach();
+                    } else if (volatileReqs[i].ioType != IO_TIMENOW) {
                         int tidx = threadIdx;
                         if (tidx == threadCount) {
                             // Find completed thread.
@@ -1748,7 +1808,9 @@ class ComputeApplication
             }
             for (int32_t i = lastReqNum; i < reqNum; i++) {
                 if (verbose) fprintf(stderr, "Got IO request %d\n", i);
-                if (volatileReqs[i].ioType == IO_READ) {
+                if (volatileReqs[i].ioType == IO_ACCEPT) {
+                    std::thread(handleIORequest, app, verbose, ioReqs, toGPUBuf, fromGPUBuf, i, completed, -1, &fileCache).detach();
+                } else if (volatileReqs[i].ioType != IO_TIMENOW) {
                     int tidx = threadIdx;
                     if (tidx == threadCount) {
                         // Find completed thread.

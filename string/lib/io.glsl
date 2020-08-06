@@ -93,24 +93,24 @@
 
 
 
-// Listen for connections on a socket - NOT IMPLEMENTED
+// Listen for connections on a TCP socket
 #define IO_LISTEN 6
-// Accept a new connection from a listening socket - NOT IMPLEMENTED
+// Accept a new connection from a listening socket
 #define IO_ACCEPT 7
-// Close an open file - NOT IMPLEMENTED
+// Close an open file
 #define IO_CLOSE 8
-// Open a file and return the file id - NOT IMPLEMENTED
+// Open a file and return the file id
 #define IO_OPEN 9
 
 // fsync an open file - NOT IMPLEMENTED
 #define IO_FSYNC 10
 
-// Send data to a socket - NOT IMPLEMENTED
+// Send data to a socket
 #define IO_SEND 11
-// Received data from a socket - NOT IMPLEMENTED
+// Received data from a socket
 #define IO_RECV 12
 
-// Get current time. - NOT IMPLEMENTED
+// Get current time.
 #define IO_TIMENOW 13
 // Wait for a duration on the CPU side. - NOT IMPLEMENTED
 #define IO_TIMEOUT 14
@@ -129,7 +129,7 @@
 // Invoke other compute kernels (TBD how this works) - NOT IMPLEMENTED
 #define IO_RUNSPV 35
 
-// Chrooting the IO process might be useful - NOT IMPLEMENTED
+// Chrooting the IO process might be useful
 #define IO_CHROOT 36
 
 // In case you want to stop talking to the kernel - NOT IMPLEMENTED
@@ -152,7 +152,7 @@ Hardware considerations
  - PCIe bandwidth 11-13 GB/s. On PCIe4, 20 GB/s.
  - NVMe flash can do 2.5-10 GB/s on 4-16 channels. PCIe4 could boost to 5-20 GB/s.
  - The CPU can do 30 GB/s memcpy with multiple threads, so it's possible to keep PCIe4 saturated even with x16 -> x16.
- - GPUdirect access to other PCIe devices is only available on server GPUs. Other GPUs need a roundtrip via CPU. 
+ - GPUdirect access to other PCIe devices is only available on server GPUs. Other GPUs need a roundtrip via CPU.
  - CPU memory accesses require several threads of execution to hit full memory bandwidth (single thread can do ~15 GB/s)
  - DRAM is good at random access at >cacheline chunks with ~3-4x the bandwidth of PCIe3 x16, ~2x PCIe4 x16.
  - Flash SSDs are good at random access at >128kB chunks, perform best with sequential accesses, can deal with high amounts of parallel requests. Writes are converted to log format.
@@ -227,6 +227,18 @@ The reason for issuing the write ASAP is, well, sequential memcpy peaks at 7 GB/
 
 For piping, you'll be stuck to single memcpy speeds, and would issue writes after previous writes have finished. Don't know about networking, how do you hit
 those 200-400 Gbps rates.
+
+Custom IO handlers coupled with shared library loading would make it possible to use custom CPU-side functionality from the shaders.
+For example, say you wanted to stream a fractal animation as MJPEG. The shader would compute a frame in a fractal animation,
+then use libturbojpeg on the CPU to compress it, keeping the result on the CPU memory. Finally, the shader would ask the IO layer
+to write the result buffer into the network socket.
+
+For this example, you'd need shared library loading (got it), keeping the result on the CPU side, and telling the CPU to do the write
+using the CPU side buffer. Or you could register a IO_WRITE_MPJPEG handler that'd receive {uint32_t width; uint32_t height; uint8_t data;},
+convert the image into JPEG, write the header and the image into the socket.
+
+How about doing a GUI application? You'd have to expose a window frame buffer to the compositor and receive input events.
+How about a compositor? You'd have to receive window frame buffers that you'd then composite onto a display surface and flip to the screen.
 
 
 Benchmark suite

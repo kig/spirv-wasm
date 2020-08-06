@@ -18,11 +18,12 @@ fi
 tmp_dir=$(mktemp -d -t gls-XXXXXXXXXX)
 tmp=${tmp_dir}/$(basename "$1")
 
-grep -v '^#!' "$1" | cpp -I/usr/local/lib/glsl > "${tmp}.full" &&
+grep -v '^#!' "$1" | node "$DIR"/gls_resolve_includes.js |
+cpp -nostdinc -x c -I/usr/local/lib/glsl -o "${tmp}.full" &&
 node "$DIR"/gls_preprocess.js "${tmp}.full" &&
 glslangValidator -V -o "${target}" "${tmp}.full.comp" | grep -v "^${tmp}.full.comp$"
 if [[ -f "${target}" ]]
 then
-	cat "${tmp}.full.defs.spv" >> "${target}" &&
-	rm -r "${tmp_dir}"
+	cat "${tmp}.full.defs.spv" >> "${target}" #&&
+	#rm -r "${tmp_dir}"
 fi

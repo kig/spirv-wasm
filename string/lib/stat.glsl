@@ -53,5 +53,5 @@ Stat initStat(string s) {
     st.st_blksize = readU32heap(i); i+=4;
 
     st.error  = readI32heap(i); i+=4;
-    return st;    
+    return st;
 }

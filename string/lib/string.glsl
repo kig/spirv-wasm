@@ -402,7 +402,7 @@ size_t lastIndexOfI(string s, string key) {
 }
 
 size_t normalizeIndex(size_t i, size_t len) {
-    return clamp((i < 0) ? i + len : i, 0, len - 1);
+    return clamp((i < 0) ? i + len : i, 0, len);
 }
 
 string slice(string s, size_t start, size_t end) {
