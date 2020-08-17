@@ -1,36 +1,35 @@
 #!/usr/bin/env gls
 
-#include "file.glsl"
+#include <file.glsl>
 
-ThreadLocalCount = 4;
-ThreadGroupCount = 4;
+ThreadLocalCount = 1;
+ThreadGroupCount = 1;
 
 #define rg(i,n) for (int i=0,_l_=(n); i<_l_; i++)
 #define mapIO(i, n, f) { io _ios_[n]; rg(i, n) _ios_[i] = f; rg(i, n) awaitIO(_ios_[i]); }
 
 bool testRead() {
     string r1 = readSync("hello.txt", malloc(100));
-    bool okShort = strEq(r1, "Hello, world!");
-    if (!okShort) println(concat(str(strLen(r1)), r1));
+    bool okShort = strEq(r1, "Hello, world!\n");
+    if (!okShort) println(concat(str(strLen(r1)), " ", r1));
 
     string buf = malloc(100);
     int ok;
     io reqNum = read("hello.txt", 0, 100, buf);
     string res = awaitIO(reqNum, ok);
-    bool okLong = strEq(res, "Hello, world!");
-    if (!okLong) println(concat(str(strLen(res)), res));
+    bool okLong = strEq(res, "Hello, world!\n");
+    if (!okLong) println(concat(str(strLen(res)), " ", res));
 
     return okShort && okLong;
 }
 
 bool testWrite() {
     string buf = malloc(100);
-    string filename = concat("write", str(ThreadID), ".txt");
+    string filename = concat("write", str(ThreadId), ".txt");
 
     awaitIO(createFile(filename));
     awaitIO(truncateFile(filename, 0));
     awaitIO(write(filename, 0, 100, "Write, write, write!"));
-    string r1 = awaitIO(read(filename, 0, 100, buf));
     bool firstOk = strEq(r1, "Write, write, write!");
     if (!firstOk) println(concat(str(strLen(r1)), r1));
     awaitIO(truncateFile(filename, 0));
@@ -47,21 +46,21 @@ bool testWrite() {
 
 bool testRunCmd() {
     FREE(FREE_IO(
-        awaitIO(runCmd(concat("echo Hello from thread ", str(ThreadID))));
+        awaitIO(runCmd(concat("echo Hello from thread ", str(ThreadId))));
         awaitIO(runCmd(concat(
-            "node -e 'fs=require(`fs`); fs.writeFileSync(`node-${", 
-            str(ThreadID),
+            "node -e 'fs=require(`fs`); fs.writeFileSync(`node-${",
+            str(ThreadId),
             "}.txt`, Date.now().toString())'"
         )));
     ))
-    string res = readSync(concat("node-", str(ThreadID), ".txt"), malloc(1000));
-    println(concat("Node says ", res));    
-    deleteFile(concat("node-", str(ThreadID), ".txt"));
+    string res = readSync(concat("node-", str(ThreadId), ".txt"), malloc(1000));
+    println(concat("Node says ", res));
+    deleteFile(concat("node-", str(ThreadId), ".txt"));
     return true;
 }
 
 bool testLs() {
-    string dir = concat("dir-", str(ThreadID));
+    string dir = concat("dir-", str(ThreadId));
     awaitIO(mkdir(dir));
     mapIO(i, 10, createFile(concat(dir, "/", str(i))));
     stringArray res = awaitIO(ls(dir, malloc(1000)));
@@ -85,9 +84,9 @@ bool testLs() {
 
 bool testGetCwd() {
     string cwd = awaitIO(getCwd());
-    println(concat(str(ThreadID), " cwd is ", cwd));
+    println(concat(str(ThreadId), " cwd is ", cwd));
     bool ok = strLen(cwd) > 0;
-    if (ThreadID == 0) {
+    if (ThreadId == 0) {
         awaitIO(mkdir("test_cwd"));
         awaitIO(chdir("test_cwd"));
         string newCwd = awaitIO(getCwd());
@@ -99,14 +98,15 @@ bool testGetCwd() {
 }
 
 void printTest(bool ok, string name) {
-    if (!ok || ThreadID == 0) {
-        println(concat(str(ThreadID), ": ", name, ok ? " successful" : " failed!"));
+    if (!ok || ThreadId == 0) {
+        println(concat(str(ThreadId), ": ", name, ok ? " successful" : " failed!"));
     }
 }
 
 #define TEST(testFn) FREE(FREE_IO(printTest(testFn(), #testFn)))
 
 void main() {
+    awaitIO(chdir("test_data"));
     TEST(testRead);
     TEST(testWrite);
     TEST(testRunCmd);

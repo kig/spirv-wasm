@@ -122,6 +122,8 @@ let outputString = `#version 450
 #extension GL_EXT_shader_explicit_arithmetic_types : require
 #extension GL_KHR_memory_scope_semantics : require
 #extension GL_KHR_shader_subgroup_basic : require
+#extension GL_ARB_shader_clock : require
+#extension GL_EXT_shader_realtime_clock : require
 
 int32_t HeapSize = ${heapSize};
 int32_t FromIOSize = ${fromIOSize};

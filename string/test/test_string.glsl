@@ -7,14 +7,15 @@ ThreadLocalCount = 1;
 
 layout(std430, binding = 0) buffer outputBuffer { int32_t outputs[]; };
 
-
-#include <string.glsl>
+#include <file.glsl>
 
 void main() {
 
-    ptr_t heapTop = heapPtr;
-    
     ptr_t op = (ThreadId+1) * (HeapSize/4) - 256;
+    ptr_t start = op;
+
+    FREE(
+    ptr_t heapTop = heapPtr;
 
     string emptys = "";
 
@@ -51,7 +52,7 @@ void main() {
     outputs[op++] = indexOfI(c, 'x') == -1 ? 1 : -1;
     outputs[op++] = indexOfI(c, 'a') == 0 ? 1 : -1;
     outputs[op++] = indexOf(c, 'j') == 19 ? 1 : -1;
-    
+
     string csv = ",a,b,,xxx,z,,";
     {
     pair_t pair = splitOnce(csv, ",");
@@ -87,25 +88,25 @@ void main() {
     string csv1 = join(s0, ",");
     string csv2 = join(s1, "woo");
     string csv3 = join(s2, "bar");
-    outputs[op++] = 
+    outputs[op++] =
     strCmp(csv0, csv) == 0 ? 1 : -1;
-    outputs[op++] = 
+    outputs[op++] =
     strCmp(csv1, csv) == 0 ? 1 : -1;
-    outputs[op++] = 
+    outputs[op++] =
     strCmp(csv2, "wooawoobwoowooxxxwoozwoowoo") == 0 ? 1 : -1;
-    outputs[op++] = 
+    outputs[op++] =
     strCmp(csv3, ",a,bbarxxx,zbar") == 0 ? 1 : -1; // 33
 
 
-    outputs[op++] = 
+    outputs[op++] =
     strCmp(join(splitOnce("a,b", ','), ','), "a,b") == 0 ? 1 : -1;
-    outputs[op++] = 
+    outputs[op++] =
     strCmp(join(splitOnce("ab", ','), ','), "ab") == 0 ? 1 : -1;
-    outputs[op++] = 
+    outputs[op++] =
     strCmp(join(splitOnce(",b", ','), ','), ",b") == 0 ? 1 : -1;
-    outputs[op++] = 
+    outputs[op++] =
     strCmp(join(splitOnce("a,", ','), ','), "a,") == 0 ? 1 : -1; // 37
-    
+
     bool b0 = startsWith(c, s);
     bool b1 = startsWith(c, t);
     bool b2 = endsWith(c, t);
@@ -128,18 +129,18 @@ void main() {
     outputs[op++] = includes(emptys, emptys) ? 1 : -1;
     outputs[op++] = includes(s, emptys) ? 1 : -1; // 54
 
-    outputs[op++] = 
-    strCmp(capitalize("hello there Bob a"), "Hello There Bob A") == 0 ? 1 : -1; 
+    outputs[op++] =
+    strCmp(capitalize("hello there Bob a"), "Hello There Bob A") == 0 ? 1 : -1;
     // 55
-    outputs[op++] = 
+    outputs[op++] =
     strCmp(reverse("abc"), "cba") == 0 ? 1 : -1;
-    outputs[op++] = 
+    outputs[op++] =
     strCmp(reverse("ab"), "ba") == 0 ? 1 : -1;
-    outputs[op++] = 
+    outputs[op++] =
     strCmp(reverse("a"), "a") == 0 ? 1 : -1; // 58
 
     string r0 = replace("<h1>Hi</h1>", "h1", "span");
-    outputs[op++] = 
+    outputs[op++] =
     strCmp(r0, "<span>Hi</span>") == 0 ? 1 : -1; // 59
 
     string trims = " \t\nhi  \r\n  \t  ";
@@ -308,4 +309,19 @@ void main() {
     outputs[op++] = strCmpI("aBcD", "AbCd") == 0 ? 1 : -1;
     outputs[op++] = strCmpI("", "aBc") < 0 ? 1 : -1; // 190
     outputs[op++] = strCmpI("aBc", "") > 0 ? 1 : -1; // 191
+
+    )
+
+    bool failed = false;
+    for (int i = start; i < op; i++) {
+        if (outputs[i] != 1) {
+            failed = true;
+            FREE_ALL(
+                log(concat("Error in test ", str(i), ": ", str(outputs[i])));
+            )
+        }
+    }
+    if (!failed) {
+        log("All tests successful!");
+    }
 }

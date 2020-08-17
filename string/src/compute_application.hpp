@@ -607,7 +607,9 @@ class ComputeApplication
             .queueCount = 2, // One queue for compute, one for buffer copies.
             .pQueuePriorities = &queuePriorities};
 
-        VkPhysicalDeviceFeatures2 features;
+        VkPhysicalDeviceFeatures features1 = {};
+
+        VkPhysicalDeviceFeatures2 features = { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, .pNext = NULL, .features = features1, };
         vkGetPhysicalDeviceFeatures2(physicalDevice, &features);
 
         VkDeviceCreateInfo deviceCreateInfo = {

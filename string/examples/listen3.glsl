@@ -38,6 +38,16 @@ void main() {
 
     if (ThreadId == 0) rerunProgram = RERUN_ON_IO;
 
+    // This should do 512 accept+reads at a time and process them as they become ready.
+    // Ditto for the writes and closes.
+    // r = acceptReadBatch(listen_fd, conn_fds_i32a, reads_str_array);
+    // conn_count = awaitIO(r).x;
+    // pfor(i, conn_count, {
+    //   process_req(i, conn_fds_i32a, reads_str_array, writes_str_array);
+    // });
+    // writeCloseBatch(conn_fds_buf, conn_count, writes_str_array);
+    //
+
     stateMachine m = loadStateMachine(s_Init);
 //    atomicAdd(programReturnValue, 1);
 //    if (ThreadId == 0) {
