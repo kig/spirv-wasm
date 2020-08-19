@@ -1,6 +1,6 @@
 
 #include <assert.glsl>
-#include "lib/array.glsl"
+#include "../lib/array.glsl"
 
 ThreadLocalCount = 1;
 ThreadGroupCount = 1;

@@ -1,6 +1,6 @@
 #!/usr/bin/env gls
 
-#include <file.glsl>
+#include "../lib/file.glsl"
 
 ThreadLocalCount = 1;
 ThreadGroupCount = 1;
@@ -30,6 +30,7 @@ bool testWrite() {
     awaitIO(createFile(filename));
     awaitIO(truncateFile(filename, 0));
     awaitIO(write(filename, 0, 100, "Write, write, write!"));
+    string r1 = readSync(filename, buf);
     bool firstOk = strEq(r1, "Write, write, write!");
     if (!firstOk) println(concat(str(strLen(r1)), r1));
     awaitIO(truncateFile(filename, 0));
