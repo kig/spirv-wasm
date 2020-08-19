@@ -98,6 +98,51 @@ void test_hashDelete() {
     }
     assert(true == hashGet(ht, 30, v));
     assert(321 == v);
+    log("hashDelete: Check sequences of gets, sets and deletes");
+
+    for (int32_t i = 0; i < 500; i+=3) {
+        hashSet(ht, i, i);
+    }
+    for (int32_t i = 0; i < 500; i+=7) {
+        hashDelete(ht, i);
+    }
+    for (int32_t i = 0; i < 500; i+=3) {
+        if (i % 7 != 0) {
+    assert(true == hashGet(ht, i, v));
+    assert(i == v);
+            if (!hashGet(ht, i, v)) {
+                log(concat("err 1.1: ", str(i)));
+            }
+        } else {
+    assert(false == hashGet(ht, i, v));
+            if (hashGet(ht, i, v)) {
+                log(concat("err 1.2: ", str(i)));
+            }
+        }
+    }
+
+    for (int32_t i = 0; i < 500; i+=11) {
+        hashSet(ht, i, i);
+    }
+    for (int32_t i = 0; i < 500; i+=3) {
+        hashDelete(ht, i);
+    }
+    for (int32_t i = 0; i < 500; i+=11) {
+        if (i % 3 != 0 && i != 7) {
+    assert(true == hashGet(ht, i, v));
+    assert(i == v);
+            if (!hashGet(ht, i, v)) {
+                log(concat("err 2.1: ", str(i)));
+            }
+        } else {
+    assert(false == hashGet(ht, i, v));
+            if (hashGet(ht, i, v)) {
+                log(concat("err 2.2: ", str(i)));
+            }
+        }
+    }
+
+
 }
 
 void main() {

@@ -131,7 +131,6 @@ bool hashGet(hashtable ht, int32_t key, out int32_t value) {
     uint32_t i = 0;
     while (i < 8) {
         int32_t k = i32heap[ht.table.x + idx * 2];
-        if (k == -1) return false;
         if (k == key) {
             value = i32heap[ht.table.x + idx * 2 + 1];
             return true;
@@ -174,16 +173,59 @@ bool hashGet(hashtable ht, int32_t key, out int32_t value) {
 
     true == hashGet(ht, 30, v);
     321 == v;
+
+    log("hashDelete: Check sequences of gets, sets and deletes");
+
+    for (int32_t i = 0; i < 500; i+=3) {
+        hashSet(ht, i, i);
+    }
+    for (int32_t i = 0; i < 500; i+=7) {
+        hashDelete(ht, i);
+    }
+    for (int32_t i = 0; i < 500; i+=3) {
+        if (i % 7 != 0) {
+            true == hashGet(ht, i, v);
+            i == v;
+            if (!hashGet(ht, i, v)) {
+                log(concat("err 1.1: ", str(i)));
+            }
+        } else {
+            false == hashGet(ht, i, v);
+            if (hashGet(ht, i, v)) {
+                log(concat("err 1.2: ", str(i)));
+            }
+        }
+    }
+
+    for (int32_t i = 0; i < 500; i+=11) {
+        hashSet(ht, i, i);
+    }
+    for (int32_t i = 0; i < 500; i+=3) {
+        hashDelete(ht, i);
+    }
+    for (int32_t i = 0; i < 500; i+=11) {
+        if (i % 3 != 0 && i != 7) {
+            true == hashGet(ht, i, v);
+            i == v;
+            if (!hashGet(ht, i, v)) {
+                log(concat("err 2.1: ", str(i)));
+            }
+        } else {
+            false == hashGet(ht, i, v);
+            if (hashGet(ht, i, v)) {
+                log(concat("err 2.2: ", str(i)));
+            }
+        }
+    }
+
 */
 bool hashDelete(hashtable ht, int32_t key) {
     uint32_t idx = murmur3hash(key) & (ht.capacity-1);
     uint32_t i = 0;
     while (i < 8) {
         int32_t k = i32heap[ht.table.x + idx * 2];
-        if (k == -1) return false;
         if (k == key) {
             i32heap[ht.table.x + idx * 2] = -1;
-            i32heap[ht.table.x + idx * 2 + 1] = 0;
             return true;
         }
         idx++;
