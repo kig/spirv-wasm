@@ -15,6 +15,7 @@ int32_t murmur3hash(int32_t k)
     k ^= k >> 13;
     k *= 0xc2b2ae35;
     k ^= k >> 16;
+    if (k == -1) k = 0;
     return k;
 }
 
