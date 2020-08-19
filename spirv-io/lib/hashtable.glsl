@@ -3,11 +3,12 @@
 
 struct hashtable {
     alloc_t table;
-    uint32_t capacity;
+    int32_t capacity;
+    int32_t count;
 };
 
 // 32 bit Murmur3 hash
-uint32_t murmur3hash(uint32_t k)
+int32_t murmur3hash(int32_t k)
 {
     k ^= k >> 16;
     k *= 0x85ebca6b;
@@ -19,23 +20,29 @@ uint32_t murmur3hash(uint32_t k)
 
 /*T
     hashtable ht = allocHashtable(300);
-    512*2 == strLen(ht.table);
+    512 == ht.capacity;
+    512*3 == strLen(ht.table);
+    0 == ht.count;
 
     ht = allocHashtable(256);
-    256*2 == strLen(ht.table);
+    256 == ht.capacity;
+    256*3 == strLen(ht.table);
+    0 == ht.count;
 
     ht = allocHashtable(257);
-    512*2 == strLen(ht.table);
+    512 == ht.capacity;
+    512*3 == strLen(ht.table);
+    0 == ht.count;
 */
-hashtable allocHashtable(uint32_t size) {
-    size = 1 << uint32_t(ceil(log2(float(size))));
-    hashtable ht = hashtable(malloc(4 * (int32_t(size) * 2 + 16), 4), size);
+hashtable allocHashtable(int32_t size) {
+    size = 1 << int32_t(ceil(log2(float(size))));
+    hashtable ht = hashtable(malloc(4 * (int32_t(size) * 3), 4), size, 0);
     ht.table /= 4;
-    for (uint32_t i = ht.table.x; i < ht.table.y; i += 2) {
+    for (uint32_t i = ht.table.x; i < ht.table.y; i += 3) {
         i32heap[i] = -1;
-        i32heap[i + 1] = 0;
+        i32heap[i+1] = -1;
+        i32heap[i+2] = 0;
     }
-    ht.table.y -= 16;
     return ht;
 }
 
@@ -62,13 +69,15 @@ hashtable allocHashtable(uint32_t size) {
     true == hashGet(ht, 248, v);
     5 == v;
 
+    256 == ht.capacity;
+
     log("Adding 260 keys");
     for (int32_t i = 0; i < 260; i++) {
         hashSet(ht, i, i);
     }
 
     // Resized table
-    512*2 == strLen(ht.table);
+    512 == ht.capacity;
 
     log("Checking for keys");
     // Check if all the keys are still there
@@ -79,33 +88,32 @@ hashtable allocHashtable(uint32_t size) {
 
 */
 void hashSet(inout hashtable ht, int32_t key, int32_t value) {
-    uint32_t idx = murmur3hash(key) & (ht.capacity-1);
-    uint32_t i = 0;
-    while (i32heap[ht.table.x + idx*2] != -1 && i32heap[ht.table.x + idx*2] != key && i < 8) {
-        idx++;
-        i++;
-    }
-    if (i == 8) {
+    if ((ht.count + 1) * 100 > ht.capacity * 70) {
         hashtable nt = allocHashtable(ht.capacity*2);
         //FREE_ALL( log(concat("Resize ", str(ivec2(ht.capacity, nt.capacity)))) );
-        for (i = ht.table.x; i < ht.table.y+16; i += 2) {
-            if (i32heap[i] != -1) {
-                uint32_t nidx = murmur3hash(i32heap[i]) & (nt.capacity-1);
-                while (i32heap[nt.table.x + nidx*2] != -1) {
-                    nidx++;
+        for (uint32_t i = ht.table.x; i < ht.table.y; i += 3) {
+            if (i32heap[i+1] != -1) {
+                int32_t idx = i32heap[i+1] & (nt.capacity-1);
+                while (i32heap[nt.table.x + idx*3] != -1) {
+                    idx = (idx + 1) & (nt.capacity-1);
                 }
-                i32heap[nt.table.x + nidx*2] = i32heap[i];
-                i32heap[nt.table.x + nidx*2 + 1] = i32heap[i+1];
+                i32heap[nt.table.x + idx*3    ] = i32heap[i];
+                i32heap[nt.table.x + idx*3 + 1] = i32heap[i+1];
+                i32heap[nt.table.x + idx*3 + 2] = i32heap[i+2];
+                nt.count++;
             }
-        }
-        idx = murmur3hash(key) & (nt.capacity-1);
-        while (i32heap[nt.table.x + idx*2] != -1 && i32heap[nt.table.x + idx*2] != key) {
-            idx++;
         }
         ht = nt;
     }
-    i32heap[ht.table.x + idx*2] = key;
-    i32heap[ht.table.x + idx*2 + 1] = value;
+    int32_t h = murmur3hash(key);
+    int32_t idx = h & (ht.capacity-1);
+    while (i32heap[ht.table.x + idx*3] != -1 && i32heap[ht.table.x + idx*3] != key) {
+        idx = (idx + 1) & (ht.capacity-1);
+    }
+    if (i32heap[ht.table.x + idx*3] == -1) ht.count++;
+    i32heap[ht.table.x + idx*3] = key;
+    i32heap[ht.table.x + idx*3 + 1] = h;
+    i32heap[ht.table.x + idx*3 + 2] = value;
 }
 
 /*T
@@ -127,16 +135,18 @@ void hashSet(inout hashtable ht, int32_t key, int32_t value) {
 
 */
 bool hashGet(hashtable ht, int32_t key, out int32_t value) {
-    uint32_t idx = murmur3hash(key) & (ht.capacity-1);
-    uint32_t i = 0;
-    while (i < 8) {
-        int32_t k = i32heap[ht.table.x + idx * 2];
+    int32_t idx = murmur3hash(key) & (ht.capacity-1);
+    while (true) {
+        int32_t k = i32heap[ht.table.x + idx * 3];
         if (k == key) {
-            value = i32heap[ht.table.x + idx * 2 + 1];
+            int32_t kh = i32heap[ht.table.x + idx * 3 + 1];
+            if (kh == -1) return false;
+            value = i32heap[ht.table.x + idx * 3 + 2];
             return true;
+        } else if (k == -1) {
+            return false;
         }
-        idx++;
-        i++;
+        idx = (idx + 1) & (ht.capacity-1);
     }
     return false;
 }
@@ -204,7 +214,7 @@ bool hashGet(hashtable ht, int32_t key, out int32_t value) {
         hashDelete(ht, i);
     }
     for (int32_t i = 0; i < 500; i+=11) {
-        if (i % 3 != 0 && i != 7) {
+        if (i % 3 != 0) {
             true == hashGet(ht, i, v);
             i == v;
             if (!hashGet(ht, i, v)) {
@@ -219,17 +229,18 @@ bool hashGet(hashtable ht, int32_t key, out int32_t value) {
     }
 
 */
-bool hashDelete(hashtable ht, int32_t key) {
-    uint32_t idx = murmur3hash(key) & (ht.capacity-1);
-    uint32_t i = 0;
-    while (i < 8) {
-        int32_t k = i32heap[ht.table.x + idx * 2];
+bool hashDelete(inout hashtable ht, int32_t key) {
+    int32_t idx = murmur3hash(key) & (ht.capacity-1);
+    while (true) {
+        int32_t  k = i32heap[ht.table.x + idx * 3];
         if (k == key) {
-            i32heap[ht.table.x + idx * 2] = -1;
+            if (i32heap[ht.table.x + idx * 3 + 1] == -1) return false;
+            i32heap[ht.table.x + idx * 3 + 1] = -1;
             return true;
+        } else if (k == -1) {
+            return false;
         }
-        idx++;
-        i++;
+        idx = (idx + 1) & (ht.capacity-1);
     }
     return false;
 }

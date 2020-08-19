@@ -13,11 +13,17 @@ FromIOSize = 16777216;
 void test_allocHashtable() {
 
     hashtable ht = allocHashtable(300);
-    assert(512*2 == strLen(ht.table));
+    assert(512 == ht.capacity);
+    assert(512*3 == strLen(ht.table));
+    assert(0 == ht.count);
     ht = allocHashtable(256);
-    assert(256*2 == strLen(ht.table));
+    assert(256 == ht.capacity);
+    assert(256*3 == strLen(ht.table));
+    assert(0 == ht.count);
     ht = allocHashtable(257);
-    assert(512*2 == strLen(ht.table));
+    assert(512 == ht.capacity);
+    assert(512*3 == strLen(ht.table));
+    assert(0 == ht.count);
 }
 
 void test_hashSet() {
@@ -39,14 +45,14 @@ void test_hashSet() {
     assert(true == hashGet(ht, 45, v));
     assert(4 == v);
     assert(true == hashGet(ht, 248, v));
-    assert(5 == v);
+    assert(5 == v);    assert(256 == ht.capacity);
     log("Adding 260 keys");
     for (int32_t i = 0; i < 260; i++) {
         hashSet(ht, i, i);
     }
 
     // Resized table
-    assert(512*2 == strLen(ht.table));
+    assert(512 == ht.capacity);
     log("Checking for keys");
     // Check if all the keys are still there
     for (int32_t i = 0; i < 260; i++) {
@@ -128,7 +134,7 @@ void test_hashDelete() {
         hashDelete(ht, i);
     }
     for (int32_t i = 0; i < 500; i+=11) {
-        if (i % 3 != 0 && i != 7) {
+        if (i % 3 != 0) {
     assert(true == hashGet(ht, i, v));
     assert(i == v);
             if (!hashGet(ht, i, v)) {
