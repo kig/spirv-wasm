@@ -106,6 +106,30 @@ alloc_t malloc(size_t len, size_t align) {
 	return alloc_t(ptr, heapPtr);
 }
 
+alloc_t malloc(uint64_t len) {
+	ptr_t ptr = heapPtr;
+	heapPtr += ptr_t(len);
+	return alloc_t(ptr, heapPtr);
+}
+
+alloc_t malloc(uint64_t len, size_t align) {
+	ptr_t ptr = ((heapPtr+(align-1)) / align) * align;
+	heapPtr = ptr + ptr_t(len);
+	return alloc_t(ptr, heapPtr);
+}
+
+alloc_t malloc(uint32_t len) {
+	ptr_t ptr = heapPtr;
+	heapPtr += ptr_t(len);
+	return alloc_t(ptr, heapPtr);
+}
+
+alloc_t malloc(uint32_t len, size_t align) {
+	ptr_t ptr = ((heapPtr+(align-1)) / align) * align;
+	heapPtr = ptr + ptr_t(len);
+	return alloc_t(ptr, heapPtr);
+}
+
 ptr_t toIndexPtr(ptr_t ptr) {
     return ((ptr+(INDEX_SIZE-1)) / INDEX_SIZE);
 }

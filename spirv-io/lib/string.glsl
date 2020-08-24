@@ -235,6 +235,31 @@ string str(int64_t i) {
     return string(start, heapPtr);
 }
 
+string str(float i) {
+    ptr_t start = heapPtr;
+    if (i < 0.0) heap[heapPtr++] = CHR_DASH;
+    else if (i == 0.0) heap[heapPtr++] = CHR_0;
+    ptr_t numStart = heapPtr;
+    i = abs(i);
+    float fi = fract(i);
+    while (i > 1.0) {
+        heap[heapPtr++] = CHR_0 + char(mod(i, 10.0));
+        i /= 10.0;
+    }
+    reverseInPlace(string(numStart, heapPtr));
+    if (fi > 0.0) {
+        heap[heapPtr++] = CHR_DOT;
+        numStart = heapPtr;
+        i = fi * 10000.0;
+        while (i > 1.0) {
+            heap[heapPtr++] = CHR_0 + char(mod(i, 10.0));
+            i /= 10.0;
+        }
+        reverseInPlace(string(numStart, heapPtr));
+    }
+    return string(start, heapPtr);
+}
+
 string str(ivec2 v) {
     ptr_t start = heapPtr;
     _(i)_(v)_(e)_(c)_(2);
@@ -542,7 +567,7 @@ string replace(string s, string pattern, string replacement) {
     ptr_t ptr = heapPtr;
     stringArray a = split(s, pattern);
     string res = join(a, replacement);
-    
+
     string moved = string(ptr, ptr + strLen(res));
     strCopy(moved, res);
     heapPtr = moved.y;
@@ -566,7 +591,7 @@ string repeat(string pattern, size_t count) {
         strCopy(string(i, s.y), pattern);
     }
     return s;
-} 
+}
 
 string padStart(string s, size_t len, char filler) {
     len = max(0, len);
@@ -640,6 +665,45 @@ string trimEnd(string s) {
 
 string trim(string s) {
     return trimEnd(trimStart(s));
+}
+
+int32_t parsei32(string s) {
+    int32_t v = 0;
+    int32_t f = 1;
+    int32_t ex = 1;
+    for (ptr_t i = s.y-1; i >= s.x; --i) {
+        char c = heap[i];
+        if (c == '-') {
+            f = -1;
+        } else if (c >= '0' && c <= '9') {
+            v += ex * int32_t(c - '0');
+            ex *= 10;
+        }
+    }
+    return f * v;
+}
+
+float parsef32(string s) {
+    float v = 0.0;
+    float f = 1.0;
+    float ex = 1.0;
+    for (ptr_t i = s.y-1; i >= s.x; --i) {
+        char c = heap[i];
+        if (c == '-') {
+            f = -1.0;
+        } else if (c >= '0' && c <= '9') {
+            v += ex * float(c - '0');
+            ex *= 10.0;
+        } else if (c == '.') {
+            v /= ex;
+            ex = 1.0;
+        } else if (c == 'e' || c == 'E') {
+            ex = pow(10.0, f * v);
+            v = 0.0;
+            f = 1.0;
+        }
+    }
+    return f * v;
 }
 
 %%GLOBALS%%

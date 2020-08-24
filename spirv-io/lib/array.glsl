@@ -226,6 +226,87 @@ i32array i32slice(i32array a, size_t start, size_t end) {
     return i32array(a.start + s, a.start + e);
 }
 
+#define SWAP_I32(i, j) { ptr_t _i = a.start+i, _j = a.start+j; int32_t s = min(i32heap[_i], i32heap[_j]), t = max(i32heap[_i], i32heap[_j]); i32heap[_i] = s; i32heap[_j] = t; }
+
+void i32sort3(i32array a) {
+    SWAP_I32(1, 2);SWAP_I32(0, 2);SWAP_I32(0, 1);
+}
+
+void i32sort4(i32array a) {
+    SWAP_I32(0, 1);SWAP_I32(2, 3);SWAP_I32(0, 2);SWAP_I32(1, 3);
+    SWAP_I32(1, 2);
+}
+
+void i32sort5(i32array a) {
+    SWAP_I32(0, 1);SWAP_I32(3, 4);SWAP_I32(2, 4);SWAP_I32(2, 3);
+    SWAP_I32(0, 3);SWAP_I32(0, 2);SWAP_I32(1, 4);SWAP_I32(1, 3);
+    SWAP_I32(1, 2);
+}
+
+void i32sort6(i32array a) {
+    SWAP_I32(1, 2);SWAP_I32(0, 2);SWAP_I32(0, 1);SWAP_I32(4, 5);
+    SWAP_I32(3, 5);SWAP_I32(3, 4);SWAP_I32(0, 3);SWAP_I32(1, 4);
+    SWAP_I32(2, 5);SWAP_I32(2, 4);SWAP_I32(1, 3);SWAP_I32(2, 3);
+}
+
+void i32sort7(i32array a) {
+    SWAP_I32(1, 2);SWAP_I32(0, 2);SWAP_I32(0, 1);SWAP_I32(3, 4);
+    SWAP_I32(5, 6);SWAP_I32(3, 5);SWAP_I32(4, 6);SWAP_I32(4, 5);
+    SWAP_I32(0, 4);SWAP_I32(0, 3);SWAP_I32(1, 5);SWAP_I32(2, 6);
+    SWAP_I32(2, 5);SWAP_I32(1, 3);SWAP_I32(2, 4);SWAP_I32(2, 3);
+}
+
+void i32sort8(i32array a) {
+    SWAP_I32(0, 1);SWAP_I32(2, 3);SWAP_I32(0, 2);SWAP_I32(1, 3);
+    SWAP_I32(1, 2);SWAP_I32(4, 5);SWAP_I32(6, 7);SWAP_I32(4, 6);
+    SWAP_I32(5, 7);SWAP_I32(5, 6);SWAP_I32(0, 4);SWAP_I32(1, 5);
+    SWAP_I32(1, 4);SWAP_I32(2, 6);SWAP_I32(3, 7);SWAP_I32(3, 6);
+    SWAP_I32(2, 4);SWAP_I32(3, 5);SWAP_I32(3, 4);
+}
+
+void siftDown(i32array a, ptr_t lo, ptr_t hi, ptr_t first) {
+    ptr_t root = lo;
+    while (true) {
+        ptr_t child = 2 * root + 1;
+        if (child >= hi) break;
+        if (child + 1 < hi && first+child < first+child+1) {
+            child++;
+        }
+        if (!(first+root < first+child)) {
+            return;
+        }
+        SWAP_I32(first+root, first+child);
+        root = child;
+    }
+}
+
+// heapSort from golang's sort.go
+void i32sort(i32array a) {
+    ptr_t first = 0;
+    ptr_t lo = 0;
+    ptr_t hi = a.end - a.start;
+    if (hi <= 8) {
+        // Use a sorting network for small arrays
+        switch (hi) {
+            case 8: i32sort8(a); break;
+            case 7: i32sort7(a); break;
+            case 6: i32sort6(a); break;
+            case 5: i32sort5(a); break;
+            case 4: i32sort4(a); break;
+            case 3: i32sort3(a); break;
+            case 2: SWAP_I32(0,1); break;
+        }
+        return;
+    }
+    for (ptr_t i = (hi - 1) / 2; i >= 0; i--) {
+        siftDown(a, i, hi, first);
+    }
+    for (ptr_t i = hi - 1; i >= 0; i--) {
+        SWAP_I32(first, first+i);
+        siftDown(a, lo, i, first);
+    }
+}
+
 
 
 /* Functional methods don't work in GLSL - either turn into macros or fuggeddaboutit

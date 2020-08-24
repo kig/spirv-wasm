@@ -1606,6 +1606,7 @@ class ComputeApplication
                 ok = stat(filename, &st);
             }
             if (verbose) fprintf(stderr, "Got %d from stat, req.count = %ld\n", ok, req.count);
+            volatileReqs[i].result_end = ok == 0 ? req.result_start + 104 : 0;
             if (ok == 0 && req.count >= 104) {
                 uint64_t *u64 = (uint64_t*)(toGPUBuf + req.result_start);
                 int i = 0;
@@ -1631,13 +1632,13 @@ class ComputeApplication
                 u32[i++] = st.st_blksize;
                 ((int32_t*)(u32))[i++] = 0;
 
-                volatileReqs[i].result_end = req.result_start + 104;
+                if (verbose) fprintf(stderr, "stat copied: setting res_end %d\n", req.result_start + 104);
             } else if (ok == 0) {
-                volatileReqs[i].result_end = 0;
             } else {
                 *((int32_t*)(toGPUBuf + req.result_start + 100)) = errno;
                 errno = 0;
             }
+            if (verbose) fprintf(stderr, "stat res: ok %d errno %d res_end %d res_start %d\n", ok, *((int32_t*)(toGPUBuf + req.result_start + 100)), volatileReqs[i].result_end, req.result_start);
             req.status = IO_COMPLETE;
 
         } else if (req.ioType == IO_DLOPEN) {

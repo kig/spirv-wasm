@@ -485,3 +485,6 @@ bool fileExistsSync(string filename) {
     return statSync(filename).error == 0;
 }
 
+uint64_t fileSizeSync(string filename) {
+    return statSync(filename).st_size;
+}
