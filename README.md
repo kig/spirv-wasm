@@ -21,7 +21,7 @@ For comparison, naive C++ achieves 1% of HW peak performance on a 16-core. If yo
 
 Help! There's a lot of work to do! Estimated effort for the first pass: works OK for simple pipelines 100 commits, GPU integration 300 commits, job system 300 commits, simple distributed computing 200 commits, decent standard library 500 commits. Reaching something at the level "Hey you've got to try this, it's awesome for X" is 3000 commits. I've got roughly 200 commits per year to spend here... you do the math.
 
-Try to get it running (use the [Docker image](https://github.com/kig/spirv-wasm/docker/)), write some shaders, see how it goes. 
+Try to get it running (use the [Docker image](https://github.com/kig/spirv-wasm/tree/master/docker/)), write some shaders, see how it goes. 
 
 Have a look at the [issues](https://github.com/kig/spirv-wasm/issues) and make some more. 
 
