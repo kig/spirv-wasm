@@ -1,6 +1,6 @@
 #!/usr/bin/env gls
 
-ThreadLocalCount = 256;
+ThreadLocalCount = 224;
 ThreadGroupCount = 64;
 
 #define LZ4_GROUP_SIZE 8
@@ -108,11 +108,11 @@ void main() {
                     string(groupHeapStart + ThreadLocalId * HeapSize, groupHeapStart + (ThreadLocalId+1) * HeapSize)
                 );
             }
-            
+
             if (ThreadLocalId == 0) {
                 wgBuf = string(groupHeapStart, groupHeapStart + decompressedSize);
             }
-            
+
             barrier(); memoryBarrier();
 
             string buf = string(
@@ -130,7 +130,7 @@ void main() {
                 toIOPtr = groupHeapStart;
                 ptr_t start = hitStart / 4;
                 ptr_t end = groupHeapPtr / 4;
-                
+
                 if (start != end) {
                     heapPtr = groupHeapStart;
                     for (int j = start; j < end; j++) {
@@ -141,7 +141,6 @@ void main() {
                 }
 
                 wgOff += int64_t(ThreadCount * blockSize);
-                
             }
 
             barrier(); memoryBarrier();

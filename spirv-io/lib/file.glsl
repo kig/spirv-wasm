@@ -16,13 +16,15 @@ struct ioRequest {
     int32_t _pad15;
 };
 
+int stopIO = 0;
+
 layout(std430, binding = 1) volatile buffer ioRequestsBuffer {
     int32_t ioCount;
     int32_t programReturnValue;
     int32_t maxIOCount;
     int32_t runCount;
     int32_t rerunProgram;
-    int32_t io_pad_5;
+    int32_t exited;
     int32_t io_pad_6;
     int32_t io_pad_7;
     int32_t io_pad_8;
@@ -140,11 +142,11 @@ COPYFUNC(copyHeapToIO, heap, toIO)
 COPYFUNC(copyFromIOToHeap, fromIO, heap)
 
 bool isReadIOType(int32_t ioType) {
-    return (ioType == IO_READ || ioType == IO_READLINE || ioType == IO_LS || ioType == IO_GETCWD || ioType == IO_STAT || ioType == IO_DLOPEN || ioType == IO_RECV);
+    return (ioType == IO_READ || ioType == IO_READLINE || ioType == IO_LS || ioType == IO_GETCWD || ioType == IO_STAT || ioType == IO_DLOPEN || ioType == IO_RECV || ioType == IO_MEMREAD || ioType == IO_MALLOC);
 }
 
 bool isWriteIOType(int32_t ioType) {
-    return (ioType == IO_WRITE || ioType == IO_COPY || ioType == IO_SEND);
+    return (ioType == IO_WRITE || ioType == IO_COPY || ioType == IO_SEND || ioType == IO_MEMWRITE);
 }
 
 bool isReadWriteIOType(int32_t ioType) {
@@ -153,6 +155,7 @@ bool isReadWriteIOType(int32_t ioType) {
 
 io requestIO(ioRequest request, bool needToCopyDataToIO) {
     io token = io(0, request.data.x);
+    if ((exited != 0 || stopIO != 0)) return token;
     memoryBarrier();
     // memoryBarrier(gl_ScopeDevice, gl_StorageSemanticsBuffer, gl_SemanticsAcquire);
     if (strLen(request.filename) > 0) {
@@ -192,11 +195,12 @@ io requestIO(ioRequest request) {
 
 bool pollIO(io ioReq) {
     return (
-        ioRequests[ioReq.index].status >= IO_COMPLETE && ioRequests[ioReq.index].data.y != -1
+        (exited != 0 || stopIO != 0) || ioRequests[ioReq.index].status >= IO_COMPLETE && ioRequests[ioReq.index].data.y != -1
     );
 }
 
 void awaitAndDiscardIO(io ioReq) {
+    if ((exited != 0 || stopIO != 0)) return;
     if (ioRequests[ioReq.index].status != IO_NONE) {
         while (ioRequests[ioReq.index].status < IO_COMPLETE ||
                ioRequests[ioReq.index].data.y == -1);
@@ -205,6 +209,7 @@ void awaitAndDiscardIO(io ioReq) {
 }
 
 alloc_t awaitIO(io ioReq, inout int32_t status, bool noCopy, out size_t ioCount, out bool compressed) {
+    if ((exited != 0 || stopIO != 0)) return alloc_t(-1,-1);
     if (ioRequests[ioReq.index].status != IO_NONE) {
         while (ioRequests[ioReq.index].status < IO_COMPLETE ||
                ioRequests[ioReq.index].data.y == -1);
@@ -262,6 +267,7 @@ alloc_t awaitIO(io ioReq, inout int32_t status, bool noCopy, out size_t ioCount,
 }
 
 alloc_t awaitIO2(io ioReq, out string data2) {
+    if ((exited != 0 || stopIO != 0)) return alloc_t(-1,-1);
     if (ioRequests[ioReq.index].status != IO_NONE) {
         while (ioRequests[ioReq.index].status < IO_COMPLETE ||
                ioRequests[ioReq.index].data.y == -1);
@@ -405,6 +411,8 @@ io close(file fd) {
 }
 
 io exit(int32_t exitCode) {
+    exited = 1;
+    programReturnValue = exitCode;
     return requestIO(ioRequest(IO_EXIT, IO_START, exitCode, 0, string(0,0), string(0,0), 0,0,string(0,0),0,0));
 }
 
@@ -434,13 +442,30 @@ io sendAndClose(socket sock, string data) {
     return requestIO(ioRequest(IO_SEND, IO_START, 0, strLen(data), sock, data, 0,-1,string(0,0),0,0));
 }
 
+io memAlloc(int64_t count, string data) {
+    return requestIO(ioRequest(IO_MALLOC, IO_START, 0, count, string(0,0), data, 0,0,string(0,0),0,0));
+}
+
+io memFree(int64_t ptr) {
+    return requestIO(ioRequest(IO_MEMFREE, IO_START, ptr, 0, string(0,0), string(0,0), 0,0,string(0,0),0,0));
+}
+
+io memRead(int64_t ptr, string data) {
+    return requestIO(ioRequest(IO_MEMREAD, IO_START, ptr, strLen(data), string(0,0), data, 0,0,string(0,0),0,0));
+}
+
+io memWrite(int64_t ptr, string data) {
+    return requestIO(ioRequest(IO_MEMWRITE, IO_START, ptr, strLen(data), string(0,0), data, 0,0,string(0,0),0,0));
+}
 
 socket listenSync(int32_t port) {
     return awaitIO(listen(port));
 }
 
 
-
+void exitSync(int32_t code) {
+    awaitIO(exit(code));
+}
 
 alloc_t readSync(string filename, int64_t offset, size_t count) { return awaitIO(read(filename, offset, count, malloc(count))); }
 alloc_t readSync(string filename, int64_t offset, size_t count, string buf) { return awaitIO(read(filename, offset, count, buf)); }
@@ -448,6 +473,19 @@ alloc_t readSync(string filename, string buf) { return awaitIO(read(filename, bu
 
 alloc_t writeSync(string filename, int64_t offset, size_t count, string buf) { return awaitIO(write(filename, offset, count, buf)); }
 alloc_t writeSync(string filename, string buf) { return awaitIO(write(filename, buf)); }
+
+#define PRINT_STR_2(f) void f(string a, string b) { FREE(f(concat(a, b))); }
+#define PRINT_STR_3(f) void f(string a, string b, string c) { FREE(f(concat(a, b, c))); }
+#define PRINT_STR_4(f) void f(string a, string b, string c, string d) { FREE(f(concat(a, b, c, d))); }
+#define PRINT_STR_5(f) void f(string a, string b, string c, string d, string e) { FREE(f(concat(a, b, c, d, e))); }
+#define PRINT_STR_6(f) void f(string a, string b, string c, string d, string e, string g) { FREE(f(concat(a, b, c, d, e, g))); }
+
+#define PRINT_STR_FUNC(f) \
+    PRINT_STR_2(f) \
+    PRINT_STR_3(f) \
+    PRINT_STR_4(f) \
+    PRINT_STR_5(f) \
+    PRINT_STR_6(f)
 
 void print(string message) {
     FREE_IO(awaitIO(write(stdout, -1, strLen(message), message)));
@@ -468,6 +506,13 @@ void eprintln(string message) {
 void log(string message) {
     if (ThreadLocalId == 0) eprintln(message);
 }
+
+PRINT_STR_FUNC(print)
+PRINT_STR_FUNC(println)
+PRINT_STR_FUNC(eprint)
+PRINT_STR_FUNC(eprintln)
+PRINT_STR_FUNC(log)
+
 
 Stat awaitStat(io request) {
     return initStat(awaitIO(request));

@@ -85,6 +85,15 @@
 // Close a shared library object and release its memory
 #define IO_DLCLOSE 40
 
+// Allocate memory on the CPU
+#define IO_MALLOC 42
+// Read from CPU memory
+#define IO_MEMREAD 43
+// Write to CPU memory
+#define IO_MEMWRITE 44
+// Free allocated CPU memory
+#define IO_MEMFREE 45
+
 // IO system benchmarking functions
 // How fast can you handle IO requests?
 #define IO_NOP 250
