@@ -20,3 +20,7 @@ string dlcallSync(uint64_t lib, string symbol, alloc_t args, alloc_t result) {
     FREE_IO( res = awaitIO(dlcall(lib, symbol, args, result)); )
     return res;
 }
+
+void dlcallSync(uint64_t lib, string symbol, alloc_t args) {
+    dlcallSync(lib, symbol, args, string(-4,-4));
+}

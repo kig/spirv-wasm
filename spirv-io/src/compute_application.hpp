@@ -1663,6 +1663,34 @@ class ComputeApplication
             dlclose((void*)req.offset);
             req.status = IO_COMPLETE;
 
+        } else if (req.ioType == IO_MALLOC) {
+            // Allocate CPU memory
+            void *ptr = malloc(req.count);
+            *((int64_t*)(toGPUBuf + req.result_start)) = (int64_t)ptr;
+            volatileReqs[i].result_end = req.result_start + 8;
+            req.status = IO_COMPLETE;
+
+        } else if (req.ioType == IO_MEMWRITE) {
+            // Write to CPU memory
+            void *ptr = (void*)req.offset;
+            memcpy(ptr, fromGPUBuf + req.result_start, req.count);
+            volatileReqs[i].result_end = req.result_start + req.count;
+            req.status = IO_COMPLETE;
+
+        } else if (req.ioType == IO_MEMREAD) {
+            // Read from CPU memory
+            void *ptr = (void*)req.offset;
+            memcpy(toGPUBuf + req.result_start, ptr, req.count);
+            volatileReqs[i].result_end = req.result_start + req.count;
+            req.status = IO_COMPLETE;
+
+        } else if (req.ioType == IO_MEMFREE) {
+            // Free CPU-side memory
+            void *ptr = (void*)req.offset;
+            free(ptr);
+            volatileReqs[i].result_end = 0;
+            req.status = IO_COMPLETE;
+
         } else if (req.ioType == IO_LISTEN) {
             // Start listening for connections on TCP socket
             int32_t sockfd = socket(AF_INET, SOCK_STREAM, 0);
@@ -1780,9 +1808,10 @@ class ComputeApplication
             if (reqNum < lastReqNum) {
                 for (int32_t i = lastReqNum; i < IO_REQUEST_COUNT; i++) {
                     if (verbose) fprintf(stderr, "Got IO request %d\n", i);
-                    if (volatileReqs[i].ioType == IO_ACCEPT) {
+                    int32_t ioType = volatileReqs[i].ioType;
+                    if (ioType == IO_ACCEPT) {
                         std::thread(handleIORequest, app, verbose, ioReqs, toGPUBuf, fromGPUBuf, i, completed, -1, &fileCache).detach();
-                    } else if (volatileReqs[i].ioType != IO_TIMENOW) {
+                    } else if (ioType != IO_TIMENOW) {
                         int tidx = threadIdx;
                         if (tidx == threadCount) {
                             // Find completed thread.

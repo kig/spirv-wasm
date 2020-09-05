@@ -187,6 +187,18 @@ string concat(string a, string b, string c, string d, string e) {
     return r;
 }
 
+string concat(string a, string b, string c, string d, string e, string f) {
+    string r = malloc(strLen(a) + strLen(b) + strLen(c) + strLen(d) + strLen(e) + strLen(f));
+    strCopy(r, a);
+    strCopy(r + string(strLen(a), 0), b);
+    strCopy(r + string(strLen(a)+strLen(b), 0), c);
+    strCopy(r + string(strLen(a)+strLen(b)+strLen(c), 0), d);
+    strCopy(r + string(strLen(a)+strLen(b)+strLen(c)+strLen(d), 0), e);
+    strCopy(r + string(strLen(a)+strLen(b)+strLen(c)+strLen(d)+strLen(e), 0), f);
+    return r;
+
+}
+
 string str(uint i) {
     ptr_t start = heapPtr;
     if (i == 0) heap[heapPtr++] = CHR_0;
