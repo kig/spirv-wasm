@@ -24,7 +24,7 @@ int32_t dlcallSync_i32(uint64_t lib, string func, int32_t p0, int32_t p1) {
 #define DLFUNC_ALLOC_VOID(lib, func) void func (alloc_t buf) { FREE_ALL(dlcallSync(lib, #func, buf, string(-4, -4))); }
 #define DLFUNC_CSTR_VOID(lib, func) void func (alloc_t buf) {\
     FREE_ALL(\
-        alloc_t buf2 = malloc(strLen(buf+1));\
+        alloc_t buf2 = malloc(strLen(buf)+1);\
         strCopy(buf2, buf);\
         setC(buf2, strLen(buf), char(0));\
         dlcallSync(lib, #func, buf2, string(-4, -4));\

@@ -7,11 +7,11 @@ struct ioRequest {
     int32_t status;
     int64_t offset;
     int64_t count;
-    i32vec2 filename;
-    i32vec2 data;
+    alloc_t filename;
+    alloc_t data;
     int32_t compression;
     int32_t progress;
-    i32vec2 data2;
+    alloc_t data2;
     int32_t _pad14;
     int32_t _pad15;
 };
@@ -225,7 +225,7 @@ alloc_t awaitIO(io ioReq, inout int32_t status, bool noCopy, out size_t ioCount,
     if (req.ioType == IO_LS) {
         stringArray res = stringArray(
             toIndexPtr(ioReq.heapBufStart),
-            toIndexPtr(ioReq.heapBufStart) + req.offset*2
+            toIndexPtr(ioReq.heapBufStart) + int32_t(req.offset*2)
         );
         FREE(
             heapPtr = fromIndexPtr(res.y);
@@ -491,7 +491,7 @@ void print(string message) {
     FREE_IO(awaitIO(write(stdout, -1, strLen(message), message)));
 }
 
-void println(string message) {
+void println_(string message) {
     FREE(print(concat(message, str('\n'))));
 }
 
@@ -508,10 +508,20 @@ void log(string message) {
 }
 
 PRINT_STR_FUNC(print)
-PRINT_STR_FUNC(println)
+PRINT_STR_FUNC(println_)
 PRINT_STR_FUNC(eprint)
 PRINT_STR_FUNC(eprintln)
 PRINT_STR_FUNC(log)
+
+#define println1_(a) println_(str(a))
+#define println2_(a,b) println_(str(a),str(b))
+#define println3_(a,b,c) println_(str(a),str(b),str(c))
+#define println4_(a,b,c,d) println_(str(a),str(b),str(c),str(d))
+#define println5_(a,b,c,d,e) println_(str(a),str(b),str(c),str(d),str(e))
+#define println6_(a,b,c,d,e,f) println_(str(a),str(b),str(c),str(d),str(e),str(f))
+
+#define GET_MACRO(_1,_2,_3,_4,_5,_6,NAME,...) NAME
+#define println(...) GET_MACRO(__VA_ARGS__, println6_, println5_, println4_, println3_, println2_, println1_)(__VA_ARGS__)
 
 
 Stat awaitStat(io request) {

@@ -53,7 +53,7 @@ for (segment of segments) {
 			const len = buf.length;
 			const v = `_global_${globals.length}_`;
 			output.push(v);
-			globals.push(`ivec2 ${v} = HeapGlobalsOffset + ivec2(${globalBytes}, ${globalBytes+len});`);
+			globals.push(`alloc_t ${v} = alloc_t(HeapGlobalsOffset + ${globalBytes}, HeapGlobalsOffset + ${globalBytes+len});`);
 			globalBytes += len;
 			globalsOut.push(buf);
 		}

@@ -1,9 +1,10 @@
 #include <thread_id.glsl>
 
-#define alloc_t i32vec2
 #define ptr_t int32_t
 #define size_t int32_t
-#define pair_t i32vec4
+
+struct alloc_t { ptr_t x; ptr_t y; };
+struct pair_t { alloc_t x; alloc_t y; };
 
 #define INDEX_SIZE 4
 

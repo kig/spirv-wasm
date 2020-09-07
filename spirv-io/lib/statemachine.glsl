@@ -10,11 +10,11 @@ stateMachine loadStateMachine(int initialState) {
     stateMachine m = stateMachine(
         heapPtr/4 + 1,
         stringArray(heapPtr/4 + 2, heapPtr/4 + 28),
-        heapPtr/4 + 31,
-        fromIOPtr,
-        toIOPtr
+        heapPtr/4 + 29,
+        heapPtr/4 + 30,
+        heapPtr/4 + 31
     );
-    if (u32heap[heapPtr/4] != 0x57A7E0FC) {
+    if (i32heap[heapPtr/4] != 0x57A7E0FC) {
         i32heap[heapPtr/4] = 0x57A7E0FC;
         i32heap[m.statePtr] = initialState;
         for (ptr_t i = m.attrs.x; i < m.attrs.y; i++) {

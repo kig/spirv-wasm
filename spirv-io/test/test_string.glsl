@@ -9,12 +9,13 @@ layout(std430, binding = 0) buffer outputBuffer { int32_t outputs[]; };
 
 #include "../lib/file.glsl"
 
+
+
 void main() {
 
     ptr_t op = (ThreadId+1) * (HeapSize/4) - 256;
     ptr_t start = op;
 
-    FREE(
     ptr_t heapTop = heapPtr;
 
     string emptys = "";
@@ -29,6 +30,7 @@ void main() {
         setC(t, i, lowercase(getC(s, i)));
     }
     string c = concat(s, t);
+
     outputs[op++] = strCmp(c, "ABCDEFGHIJabcdefghij") == 0 ? 1 : -1; // 0
     outputs[op++] = indexOf(c, "X") == -1 ? 1 : -1; // 1
     outputs[op++] = indexOf(c, "A") == 0 ? 1 : -1; // 2
@@ -56,29 +58,29 @@ void main() {
     string csv = ",a,b,,xxx,z,,";
     {
     pair_t pair = splitOnce(csv, ",");
-    outputs[op++] = strLen(pair.xy) == 0 ? 1 : -1;
-    outputs[op++] = strCmp(pair.zw, slice(csv, 1)) == 0 ? 1 : -1; // 20
+    outputs[op++] = strLen(pair.x) == 0 ? 1 : -1;
+    outputs[op++] = strCmp(pair.y, slice(csv, 1)) == 0 ? 1 : -1; // 20
     }
     {
     pair_t pair = splitOnce(csv, "z,,");
-    outputs[op++] = strLen(pair.zw) == 0 ? 1 : -1;
-    outputs[op++] = strCmp(pair.xy, ",a,b,,xxx,") == 0 ? 1 : -1; // 22
+    outputs[op++] = strLen(pair.y) == 0 ? 1 : -1;
+    outputs[op++] = strCmp(pair.x, ",a,b,,xxx,") == 0 ? 1 : -1; // 22
     }
     {
     pair_t pair = splitOnce(csv, ",,,");
-    outputs[op++] = strLen(pair.zw) < 0 ? 1 : -1;
-    outputs[op++] = strCmp(pair.xy, csv) == 0 ? 1 : -1; // 24
+    outputs[op++] = strLen(pair.y) < 0 ? 1 : -1;
+    outputs[op++] = strCmp(pair.x, csv) == 0 ? 1 : -1; // 24
     }
     {
     pair_t pair = splitOnce(csv, '.');
-    outputs[op++] = strLen(pair.zw) < 0 ? 1 : -1;
-    outputs[op++] = strCmp(pair.xy, csv) == 0 ? 1 : -1; // 26
+    outputs[op++] = strLen(pair.y) < 0 ? 1 : -1;
+    outputs[op++] = strCmp(pair.x, csv) == 0 ? 1 : -1; // 26
     }
     {
     pair_t pair = splitOnce(csv, ',');
-    outputs[op++] = strLen(pair.xy) == 0 ? 1 : -1;
-    outputs[op++] = strCmp(pair.zw, slice(csv, 1)) == 0 ? 1 : -1;
-    outputs[op++] = strCmp(pair.zw, "a,b,,xxx,z,,") == 0 ? 1 : -1; // 29
+    outputs[op++] = strLen(pair.x) == 0 ? 1 : -1;
+    outputs[op++] = strCmp(pair.y, slice(csv, 1)) == 0 ? 1 : -1;
+    outputs[op++] = strCmp(pair.y, "a,b,,xxx,z,,") == 0 ? 1 : -1; // 29
     }
 
     stringArray s0 = split(csv, ',');
@@ -310,7 +312,7 @@ void main() {
     outputs[op++] = strCmpI("", "aBc") < 0 ? 1 : -1; // 190
     outputs[op++] = strCmpI("aBc", "") > 0 ? 1 : -1; // 191
 
-    )
+    heapPtr = heapTop;
 
     bool failed = false;
     for (int i = start; i < op; i++) {
@@ -324,4 +326,5 @@ void main() {
     if (!failed) {
         log("All tests successful!");
     }
+    println("Hello from thread ", ThreadId, ", the time now is: ", clockRealtimeEXT());
 }

@@ -1,6 +1,6 @@
 #!/usr/bin/env gls
 
-ThreadLocalCount = 224;
+ThreadLocalCount = 256;
 ThreadGroupCount = 64;
 
 #define LZ4_GROUP_SIZE 8

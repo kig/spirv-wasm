@@ -39,7 +39,8 @@ int32_t murmur3hash(int32_t k)
 i32map i32hAlloc(int32_t size) {
     size = 1 << int32_t(ceil(log2(float(size))));
     i32map ht = i32map(malloc(4 * (int32_t(size) * 3), 4), size, 0);
-    ht.table /= 4;
+    ht.table.x /= 4;
+    ht.table.y /= 4;
     for (uint32_t i = ht.table.x; i < ht.table.y; i += 3) {
         i32heap[i] = -1;
         i32heap[i+1] = -1;

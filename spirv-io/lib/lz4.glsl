@@ -428,7 +428,7 @@ ptr_t lz4DecompressFramesFromIOToHeap(string cmp, string dst, out int32_t error)
         }
 
         while (i < cmp.y) {
-            uint32_t blockSize = readU32fromIO(i);
+            int32_t blockSize = int32_t(readU32fromIO(i));
             //log(str(blockSize));
             i += 4;
             if (blockSize == 0) break;

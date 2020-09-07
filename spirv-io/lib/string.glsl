@@ -156,45 +156,45 @@ bool strEqI(string a, string b) {
 string concat(string a, string b) {
     string c = malloc(strLen(a) + strLen(b));
     strCopy(c, a);
-    strCopy(c + string(strLen(a), 0), b);
+    strCopy(string(c.x + strLen(a), c.y), b);
     return c;
 }
 
 string concat(string a, string b, string c) {
     string r = malloc(strLen(a) + strLen(b) + strLen(c));
     strCopy(r, a);
-    strCopy(r + string(strLen(a), 0), b);
-    strCopy(r + string(strLen(a)+strLen(b), 0), c);
+    strCopy(string(r.x + strLen(a), r.y), b);
+    strCopy(string(r.x + strLen(a)+strLen(b), r.y), c);
     return r;
 }
 
 string concat(string a, string b, string c, string d) {
     string r = malloc(strLen(a) + strLen(b) + strLen(c) + strLen(d));
     strCopy(r, a);
-    strCopy(r + string(strLen(a), 0), b);
-    strCopy(r + string(strLen(a)+strLen(b), 0), c);
-    strCopy(r + string(strLen(a)+strLen(b)+strLen(c), 0), d);
+    strCopy(string(r.x + strLen(a), r.y), b);
+    strCopy(string(r.x + strLen(a)+strLen(b), r.y), c);
+    strCopy(string(r.x + strLen(a)+strLen(b)+strLen(c), r.y), d);
     return r;
 }
 
 string concat(string a, string b, string c, string d, string e) {
     string r = malloc(strLen(a) + strLen(b) + strLen(c) + strLen(d) + strLen(e));
     strCopy(r, a);
-    strCopy(r + string(strLen(a), 0), b);
-    strCopy(r + string(strLen(a)+strLen(b), 0), c);
-    strCopy(r + string(strLen(a)+strLen(b)+strLen(c), 0), d);
-    strCopy(r + string(strLen(a)+strLen(b)+strLen(c)+strLen(d), 0), e);
+    strCopy(string(r.x + strLen(a), r.y), b);
+    strCopy(string(r.x + strLen(a)+strLen(b), r.y), c);
+    strCopy(string(r.x + strLen(a)+strLen(b)+strLen(c), r.y), d);
+    strCopy(string(r.x + strLen(a)+strLen(b)+strLen(c)+strLen(d), r.y), e);
     return r;
 }
 
 string concat(string a, string b, string c, string d, string e, string f) {
     string r = malloc(strLen(a) + strLen(b) + strLen(c) + strLen(d) + strLen(e) + strLen(f));
     strCopy(r, a);
-    strCopy(r + string(strLen(a), 0), b);
-    strCopy(r + string(strLen(a)+strLen(b), 0), c);
-    strCopy(r + string(strLen(a)+strLen(b)+strLen(c), 0), d);
-    strCopy(r + string(strLen(a)+strLen(b)+strLen(c)+strLen(d), 0), e);
-    strCopy(r + string(strLen(a)+strLen(b)+strLen(c)+strLen(d)+strLen(e), 0), f);
+    strCopy(string(r.x + strLen(a), r.y), b);
+    strCopy(string(r.x + strLen(a)+strLen(b), r.y), c);
+    strCopy(string(r.x + strLen(a)+strLen(b)+strLen(c), r.y), d);
+    strCopy(string(r.x + strLen(a)+strLen(b)+strLen(c)+strLen(d), r.y), e);
+    strCopy(string(r.x + strLen(a)+strLen(b)+strLen(c)+strLen(d)+strLen(e), r.y), f);
     return r;
 
 }
@@ -245,6 +245,10 @@ string str(int64_t i) {
     }
     reverseInPlace(string(numStart, heapPtr));
     return string(start, heapPtr);
+}
+
+string str(string s) {
+    return s;
 }
 
 string str(float i) {
@@ -459,8 +463,8 @@ pair_t splitOnce(string s, char separator) {
     size_t idx = indexOf(s, separator);
     pair_t pair;
     if (idx < 0) idx = s.y - s.x;
-    pair.xy = string(s.x, s.x + idx);
-    pair.zw = string(s.x + idx + 1, s.y);
+    pair.x = string(s.x, s.x + idx);
+    pair.y = string(s.x + idx + 1, s.y);
     return pair;
 }
 
@@ -468,8 +472,8 @@ pair_t splitOnce(string s, string separator) {
     size_t idx = indexOf(s, separator);
     pair_t pair;
     if (idx < 0) idx = s.y - s.x;
-    pair.xy = string(s.x, s.x + idx);
-    pair.zw = string(s.x + idx + strLen(separator), s.y);
+    pair.x = string(s.x, s.x + idx);
+    pair.y = string(s.x + idx + strLen(separator), s.y);
     return pair;
 }
 
@@ -479,9 +483,9 @@ stringArray split(string s, char separator) {
     string rest = s;
     while (strLen(rest) >= 0) {
         pair_t pair = splitOnce(rest, separator);
-        rest = pair.zw;
-        indexHeap[p++] = pair.x;
-        indexHeap[p++] = pair.y;
+        rest = pair.y;
+        indexHeap[p++] = pair.x.x;
+        indexHeap[p++] = pair.x.y;
     }
     heapPtr = p * INDEX_SIZE;
     return stringArray(start, p);
@@ -493,9 +497,9 @@ stringArray split(string s, string separator) {
     string rest = s;
     while (strLen(rest) >= 0) {
         pair_t pair = splitOnce(rest, separator);
-        rest = pair.zw;
-        indexHeap[p++] = pair.x;
-        indexHeap[p++] = pair.y;
+        rest = pair.y;
+        indexHeap[p++] = pair.x.x;
+        indexHeap[p++] = pair.x.y;
     }
     heapPtr = p * INDEX_SIZE;
     return stringArray(start, p);
@@ -542,30 +546,30 @@ string join(stringArray a, char joiner) {
 }
 
 string join(pair_t pair, string joiner) {
-    size_t zwLen = strLen(pair.zw);
+    size_t zwLen = strLen(pair.y);
     if (zwLen < 0) {
-        return pair.xy;
+        return pair.x;
     }
-    size_t xyLen = strLen(pair.xy);
+    size_t xyLen = strLen(pair.x);
     size_t joinerLen = strLen(joiner);
     string s = malloc(xyLen + joinerLen + zwLen);
-    strCopy(s, pair.xy);
+    strCopy(s, pair.x);
     strCopy(string(s.x + xyLen, s.y), joiner);
-    strCopy(string(s.x + xyLen + joinerLen, s.y), pair.zw);
+    strCopy(string(s.x + xyLen + joinerLen, s.y), pair.y);
     return s;
 }
 
 string join(pair_t pair, char joiner) {
-    size_t zwLen = strLen(pair.zw);
+    size_t zwLen = strLen(pair.y);
     if (zwLen < 0) {
-        return pair.xy;
+        return pair.x;
     }
-    size_t xyLen = strLen(pair.xy);
+    size_t xyLen = strLen(pair.x);
     size_t joinerLen = 1;
     string s = malloc(xyLen + joinerLen + zwLen);
-    strCopy(s, pair.xy);
+    strCopy(s, pair.x);
     heap[s.x + xyLen] = joiner;
-    strCopy(string(s.x + xyLen + joinerLen, s.y), pair.zw);
+    strCopy(string(s.x + xyLen + joinerLen, s.y), pair.y);
     return s;
 }
 
@@ -613,7 +617,7 @@ string padStart(string s, size_t len, char filler) {
     for (ptr_t i = 0; i < diff; i++) {
         setC(res, i, filler);
     }
-    strCopy(res + string(max(0,diff), 0), s);
+    strCopy(string(res.x + max(0,diff), res.y), s);
     return res;
 }
 

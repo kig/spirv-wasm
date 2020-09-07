@@ -30,13 +30,13 @@ const size_t bsz = (1<<20);
 
 
 const ptr_t compressedBlocksCount = (2*(LZ4_BLOCK_COUNT+1) * (1<<22)) / 4;
-const stringArray compressedBlocks = (compressedBlocksCount + 1) + stringArray(0, 18000);
+const stringArray compressedBlocks = stringArray((compressedBlocksCount + 1), (compressedBlocksCount + 1) + 18000);
 
 const ptr_t uncompressedLengths = compressedBlocks.y;
 
 const string readBuffer = string(0, (LZ4_BLOCK_COUNT+1) * (1<<22));
 
-#define IsLastBlock io_pad_5
+#define IsLastBlock runCount
 #define WriteLength io_pad_6
 #define ReadHeapOffset io_pad_7
 #define StopReading io_pad_8
@@ -122,7 +122,7 @@ void main() {
                     DLOG(concat("blen: ", str((isCompressed ? 1 : -1) * blockLength), " poff: ", str(parseOffset)));
                     parseOffset += 4;
                     if (blockLength > (1<<22)) { FREE_ALL(log("Block length broken.")); break; }
-                    aSet(compressedBlocks, blockCount++, string(parseOffset, int32_t(parseOffset + blockLength) * (isCompressed ? 1 : -1)));
+                    aSet(compressedBlocks, blockCount++, string(ptr_t(parseOffset), ptr_t(parseOffset + blockLength) * (isCompressed ? 1 : -1)));
                     parseOffset += blockLength;
                     totalLen += blockLength;
                     if (blockCount == LZ4_BLOCK_COUNT) {
@@ -133,7 +133,7 @@ void main() {
                     fromIOPtr = ReadHeapOffset;
                     ptr_t len = ptr_t(parseOffset - int64_t(ReadHeapOffset));
                     DLOG(concat("supplemental read: ", str(ivec3(ReadOffset, ReadHeapOffset, len))));
-                    readSync(filename, ReadOffset, len, ReadHeapOffset + string(0, len));
+                    readSync(filename, ReadOffset, len, string(ReadHeapOffset, ReadHeapOffset + len));
                 }
                 DLOG(concat("block count: ", str(blockCount)));
                 if (blockCount >= LZ4_BLOCK_COUNT || ReadCount != bsz * BLOCK_COUNT || ReadHeapOffset+bsz*BLOCK_COUNT > readBuffer.y) {
@@ -165,7 +165,7 @@ void main() {
                     parMemcpyFromHeapToHeap(compressed.x, readBuffer.y + i*(1<<22), strLen(compressed), ThreadLocalCount, ThreadLocalId);
                     if (ThreadLocalId == 0) i32heap[uncompressedLengths + i] = strLen(compressed);
                 } else { // Compressed block
-                    ptr_t writeEndPtr = lz4DecompressBlockFromHeapToHeap(compressed, readBuffer.y + (1<<22) * string(i, i+1), LZ4Literals, LZ4Matches);
+                    ptr_t writeEndPtr = lz4DecompressBlockFromHeapToHeap(compressed, string(readBuffer.y + (1<<22)*i, readBuffer.y + (1<<22)*(i+1)), LZ4Literals, LZ4Matches);
                     if (ThreadLocalId == 0) {
                         i32heap[uncompressedLengths + i] = writeEndPtr - (readBuffer.y + (i*(1<<22)));
                     }
@@ -204,7 +204,7 @@ void main() {
             if (ThreadId == 0) {
                 while (ReadBarrier < ThreadGroupCount);
                 awaitIO(writeIO);
-                writeIO = write(stdout, -1, size_t(WriteLength), string(0, size_t(WriteLength)), false);
+                writeIO = write(stdout, -1, size_t(WriteLength), string(0, ptr_t(WriteLength)), false);
                 ReadBarrier = 0;
             }
             while (ReadBarrier != 0);
