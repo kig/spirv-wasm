@@ -27,9 +27,10 @@ const totalHeapSize = getMatchingDef("TotalHeapSize", groupHeapSize * threadGrou
 const totalToIOSize = getMatchingDef("TotalToIOSize", groupToIOSize * threadGroupCount);
 const totalFromIOSize = getMatchingDef("TotalFromIOSize", groupFromIOSize * threadGroupCount);
 
-const segments = source.replace(/^# .*/mg, '').split(/("|'|[fui]\d\d?{|})/g);
+const segments = source.replace(/^# .*/mg, '').split(/("|'|`|[fui]\d\d?{|})/g);
 
 let inString = false;
+let inTemplate = false;
 let inChar = false;
 let inArray = false;
 let arrayType = '';
@@ -45,77 +46,102 @@ const globalsOut = [];
 let globalBytes = 0;
 
 for (segment of segments) {
-	if (segment === '"' && lastSegment[lastSegment.length-1] !== '\\') {
-		inString = !inString;
-		if (!inString) {
-			const str = stringSegments.join('');
-			const buf = Buffer.from(JSON.parse('"'+str+'"'));
-			const len = buf.length;
-			const v = `_global_${globals.length}_`;
-			output.push(v);
-			globals.push(`alloc_t ${v} = alloc_t(HeapGlobalsOffset + ${globalBytes}, HeapGlobalsOffset + ${globalBytes+len});`);
-			globalBytes += len;
-			globalsOut.push(buf);
-		}
-		stringSegments = [];
-	} else if (inString) {
-		stringSegments.push(segment);
-	} else if (segment === "'" && lastSegment[lastSegment.length-1] !== '\\') {
-		inChar = !inChar;
-		if (!inChar) {
-			const str = eval("'" + stringSegments.join('') + "'");
-			if (str.length == 4) {
-				output.push(`${Buffer.from(str).readInt32LE(0)}`);
-			} else if (str.length == 1) {
-				output.push(`toChar(${Buffer.from(str)[0]})`);
-			}
-		}
-		stringSegments = [];
-	} else if (inChar) {
-		stringSegments.push(segment);
-	} else if (/^\S+{$/.test(segment)) {
-	    inArray = true;
-	    arrayType = segment.slice(0,-1);
+    if (segment === '"' && lastSegment[lastSegment.length-1] !== '\\') {
+        inString = !inString;
+        if (!inString) {
+            const str = stringSegments.join('');
+            const buf = Buffer.from(JSON.parse('"'+str+'"'));
+            const len = buf.length;
+            const v = `_global_${globals.length}_`;
+            output.push(v);
+            globals.push(`alloc_t ${v} = alloc_t(HeapGlobalsOffset + ${globalBytes}, HeapGlobalsOffset + ${globalBytes+len});`);
+            globalBytes += len;
+            globalsOut.push(buf);
+        }
+        stringSegments = [];
+    } else if (inString) {
+        stringSegments.push(segment);
+    } else if (segment === "'" && lastSegment[lastSegment.length-1] !== '\\') {
+        inChar = !inChar;
+        if (!inChar) {
+            const str = eval("'" + stringSegments.join('') + "'");
+            if (str.length == 4) {
+                output.push(`${Buffer.from(str).readInt32LE(0)}`);
+            } else if (str.length == 1) {
+                output.push(`toChar(${Buffer.from(str)[0]})`);
+            }
+        }
+        stringSegments = [];
+    } else if (inChar) {
+        stringSegments.push(segment);
+    } else if (segment === "`" && lastSegment[lastSegment.length-1] !== '\\') {
+        inTemplate = !inTemplate;
+        if (!inTemplate) {
+            const str = stringSegments.join('');
+            const tmplSegs = str.split(/(\$\{[^}]*\})/g);
+            let out = 'concat(';
+            for (let i = 0; i < tmplSegs.length; i++) {
+                if (i % 2 == 1) {
+                    out += `str(${tmplSegs[i].slice(2,-1)}),`;
+                } else {
+                    const buf = Buffer.from(eval('`'+tmplSegs[i]+'`'));
+                    const len = buf.length;
+                    const v = `_global_${globals.length}_`;
+                    globals.push(`alloc_t ${v} = alloc_t(HeapGlobalsOffset + ${globalBytes}, HeapGlobalsOffset + ${globalBytes+len});`);
+                    globalBytes += len;
+                    globalsOut.push(buf);
+                    out += v + ',';
+                }
+            }
+            out = out.slice(0, -1) + ')';
+            output.push(out);
+        }
+        stringSegments = [];
+    } else if (inTemplate) {
+        stringSegments.push(segment);
+    } else if (/^\S+{$/.test(segment)) {
+        inArray = true;
+        arrayType = segment.slice(0,-1);
     } else if (inArray && segment === '}') {
         inArray = false;
-		const str = arraySegments.join('');
-		const v = `_array_global_${arrayGlobals.length}_`;
-		output.push(v);
-		let bitSize = parseInt(arrayType.match(/64|32|16|8/)[0]);
-		let elementCount = 1;
-		let byteSize = elementCount * bitSize / 8;
-		// Align on byteSize
-		const newGlobalBytes = Math.ceil(globalBytes / byteSize) * byteSize;
-		globalsOut.push(Buffer.alloc(newGlobalBytes - globalBytes)); // Add padding to global buffer.
-		globalBytes = newGlobalBytes;
-		const sz = byteSize;
-		const arrayElems = str.split(",").filter(s => !/^\s*$/.test(s));
-		const buf = Buffer.alloc(arrayElems.length * byteSize);
-		arrayGlobals.push(`${arrayType}array ${v} = ${arrayType}array((HeapGlobalsOffset + ${globalBytes})/${sz}, (HeapGlobalsOffset + ${globalBytes+buf.byteLength})/${sz});`);
-		let i = 0;
-		arrayElems.forEach((el) => {
-    		switch(arrayType) {
-    		    case 'f32': buf.writeFloatLE(parseFloat(el),i); i+=4; break;
-    		    case 'f64': buf.writeDoubleLE(parseFloat(el),i); i+=8; break;
-    		    case 'i8': buf.writeInt8LE(iparseInt(el),i); i+=1; break;
-    		    case 'i16': buf.writeInt16LE(parseInt(el),i); i+=2; break;
-    		    case 'i32': buf.writeInt32LE(parseInt(el),i); i+=4; break;
-    		    case 'i64': buf.writeBigInt64LE(BigInt(el),i); i+=8; break;
-    		    case 'u8': buf.writeUInt8LE(parseInt(el),i); i+=1; break;
-    		    case 'u16': buf.writeUInt16LE(parseInt(el),i); i+=2; break;
-    		    case 'u32': buf.writeUInt32LE(parseInt(el),i); i+=4; break;
-    		    case 'u64': buf.writeBigUInt64LE(BigInt(el),i); i+=8; break;
-    		}
-		});
- 		globalBytes += buf.byteLength;
-		globalsOut.push(buf);
-		arraySegments = [];
-	} else if (inArray) {
-		arraySegments.push(segment);
-	} else {
-		output.push(segment);
-	}
-	lastSegment = segment;
+        const str = arraySegments.join('');
+        const v = `_array_global_${arrayGlobals.length}_`;
+        output.push(v);
+        let bitSize = parseInt(arrayType.match(/64|32|16|8/)[0]);
+        let elementCount = 1;
+        let byteSize = elementCount * bitSize / 8;
+        // Align on byteSize
+        const newGlobalBytes = Math.ceil(globalBytes / byteSize) * byteSize;
+        globalsOut.push(Buffer.alloc(newGlobalBytes - globalBytes)); // Add padding to global buffer.
+        globalBytes = newGlobalBytes;
+        const sz = byteSize;
+        const arrayElems = str.split(",").filter(s => !/^\s*$/.test(s));
+        const buf = Buffer.alloc(arrayElems.length * byteSize);
+        arrayGlobals.push(`${arrayType}array ${v} = ${arrayType}array((HeapGlobalsOffset + ${globalBytes})/${sz}, (HeapGlobalsOffset + ${globalBytes+buf.byteLength})/${sz});`);
+        let i = 0;
+        arrayElems.forEach((el) => {
+            switch(arrayType) {
+                case 'f32': buf.writeFloatLE(parseFloat(el),i); i+=4; break;
+                case 'f64': buf.writeDoubleLE(parseFloat(el),i); i+=8; break;
+                case 'i8': buf.writeInt8LE(iparseInt(el),i); i+=1; break;
+                case 'i16': buf.writeInt16LE(parseInt(el),i); i+=2; break;
+                case 'i32': buf.writeInt32LE(parseInt(el),i); i+=4; break;
+                case 'i64': buf.writeBigInt64LE(BigInt(el),i); i+=8; break;
+                case 'u8': buf.writeUInt8LE(parseInt(el),i); i+=1; break;
+                case 'u16': buf.writeUInt16LE(parseInt(el),i); i+=2; break;
+                case 'u32': buf.writeUInt32LE(parseInt(el),i); i+=4; break;
+                case 'u64': buf.writeBigUInt64LE(BigInt(el),i); i+=8; break;
+            }
+        });
+         globalBytes += buf.byteLength;
+        globalsOut.push(buf);
+        arraySegments = [];
+    } else if (inArray) {
+        arraySegments.push(segment);
+    } else {
+        output.push(segment);
+    }
+    lastSegment = segment;
 }
 
 let outputString = `#version 450

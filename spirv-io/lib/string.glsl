@@ -153,6 +153,10 @@ bool strEqI(string a, string b) {
     return strCmpI(a, b) == 0;
 }
 
+string concat(string a) {
+    return a;
+}
+
 string concat(string a, string b) {
     string c = malloc(strLen(a) + strLen(b));
     strCopy(c, a);
@@ -195,6 +199,19 @@ string concat(string a, string b, string c, string d, string e, string f) {
     strCopy(string(r.x + strLen(a)+strLen(b)+strLen(c), r.y), d);
     strCopy(string(r.x + strLen(a)+strLen(b)+strLen(c)+strLen(d), r.y), e);
     strCopy(string(r.x + strLen(a)+strLen(b)+strLen(c)+strLen(d)+strLen(e), r.y), f);
+    return r;
+
+}
+
+string concat(string a, string b, string c, string d, string e, string f, string g) {
+    string r = malloc(strLen(a) + strLen(b) + strLen(c) + strLen(d) + strLen(e) + strLen(f) + strLen(g));
+    strCopy(r, a);
+    strCopy(string(r.x + strLen(a), r.y), b);
+    strCopy(string(r.x + strLen(a)+strLen(b), r.y), c);
+    strCopy(string(r.x + strLen(a)+strLen(b)+strLen(c), r.y), d);
+    strCopy(string(r.x + strLen(a)+strLen(b)+strLen(c)+strLen(d), r.y), e);
+    strCopy(string(r.x + strLen(a)+strLen(b)+strLen(c)+strLen(d)+strLen(e), r.y), f);
+    strCopy(string(r.x + strLen(a)+strLen(b)+strLen(c)+strLen(d)+strLen(e)+strLen(f), r.y), g);
     return r;
 
 }
