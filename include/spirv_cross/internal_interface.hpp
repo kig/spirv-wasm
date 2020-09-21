@@ -37,8 +37,14 @@
 #include <assert.h>
 #include <stdint.h>
 
+uint64_t packUint2x32(glm::uvec2 v)
+{
+	return ((uint64_t)v.x << 32) | (uint64_t)v.y;
+}
+
 namespace internal
 {
+
 // Adaptor helpers to adapt GLSL access chain syntax to C++.
 // Don't bother with arrays of arrays on uniforms ...
 // Would likely need horribly complex variadic template munging.
@@ -211,7 +217,7 @@ struct spirv_cross_shader
 		bool pre_dereference;
 	};
 
-	PPSizeResource resources[SPIRV_CROSS_NUM_DESCRIPTOR_SETS][SPIRV_CROSS_NUM_DESCRIPTOR_BINDINGS];
+	std::vector<PPSizeResource> resources[SPIRV_CROSS_NUM_DESCRIPTOR_SETS][SPIRV_CROSS_NUM_DESCRIPTOR_BINDINGS];
 	PPSize stage_inputs[SPIRV_CROSS_NUM_STAGE_INPUTS];
 	PPSize stage_outputs[SPIRV_CROSS_NUM_STAGE_OUTPUTS];
 	PPSize uniform_constants[SPIRV_CROSS_NUM_UNIFORM_CONSTANTS];
@@ -240,11 +246,12 @@ struct spirv_cross_shader
 	{
 		assert(set < SPIRV_CROSS_NUM_DESCRIPTOR_SETS);
 		assert(binding < SPIRV_CROSS_NUM_DESCRIPTOR_BINDINGS);
-		assert(!resources[set][binding].ptr);
 
-		resources[set][binding].ptr = (void **)&value.ptr;
-		resources[set][binding].size = internal::Resource<U>::Size;
-		resources[set][binding].pre_dereference = internal::Resource<U>::PreDereference;
+		PPSizeResource res;
+		res.ptr = (void **)&value.ptr;
+		res.size = internal::Resource<U>::Size;
+		res.pre_dereference = internal::Resource<U>::PreDereference;
+		resources[set][binding].push_back(res);
 	}
 
 	template <typename U>
@@ -325,14 +332,14 @@ struct spirv_cross_shader
 	{
 		assert(set < SPIRV_CROSS_NUM_DESCRIPTOR_SETS);
 		assert(binding < SPIRV_CROSS_NUM_DESCRIPTOR_BINDINGS);
-		assert(resources[set][binding].ptr);
-		assert(size >= resources[set][binding].size);
 
-		// We're using the regular PointerInterface, dereference ahead of time.
-		if (resources[set][binding].pre_dereference)
-			*resources[set][binding].ptr = *data;
-		else
-			*resources[set][binding].ptr = data;
+		for (auto res : resources[set][binding]) {
+			// We're using the regular PointerInterface, dereference ahead of time.
+			if (res.pre_dereference)
+				*res.ptr = *data;
+			else
+				*res.ptr = data;
+		}
 	}
 };
 
@@ -553,6 +560,10 @@ inline void memoryBarrierShared()
 	Barrier::memoryBarrier();
 }
 inline void memoryBarrier()
+{
+	Barrier::memoryBarrier();
+}
+inline void memoryBarrierBuffer()
 {
 	Barrier::memoryBarrier();
 }

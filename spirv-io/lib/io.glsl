@@ -276,6 +276,37 @@ Does it help to combine reads & writes into sequential blocks on CPU-side when p
 
 Caching file descriptors, helps or not?
 
+
+
+Running multiple programs on the same compute application instance
+---
+
+Running multiple programs can provide benefits in the following ways:
+
+ - Lower startup latency (< 1 ms for cached pipelines if you don't need to allocate buffers etc.)
+     - Important for GPU, where Vulkan startup latency is in the hundreds of milliseconds range.
+     - Less important on the CPU.
+ - Share buffers between programs
+     - No need to move data in and out of GPU RAM
+     - Shared page cache for file I/O
+     - Can write application as several co-operating programs vs. one megaprogram
+ - Fully use GPU when each program can use only a part of the GPU
+ - Better latency hiding for I/O (program waiting for I/O -> run another program)
+ - Share CPU memory between multi-GPU programs
+
+
+Multi-GPU support
+---
+
+Allocate memory on other GPUs and copy data over using fast p2p bus.
+Run different programs on different GPUs for e.g. pipeline processing.
+Sync with other GPUs.
+Treat CPU NUMA nodes as distinct "GPUs".
+Networked programs using the same strategy.
+
+
+
+
 Appendix A: io_uring operations
 ---
 

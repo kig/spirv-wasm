@@ -12,7 +12,6 @@ struct pair_t { alloc_t x; alloc_t y; };
 
 layout(std430, binding = 0) buffer indexBuf { ptr_t indexHeap[]; };
 
-layout(std430, binding = 0) buffer f16Buffer { float16_t f16heap[]; };
 layout(std430, binding = 0) buffer f32Buffer { float32_t f32heap[]; };
 layout(std430, binding = 0) buffer f64Buffer { float64_t f64heap[]; };
 
@@ -26,15 +25,22 @@ layout(std430, binding = 0) buffer i16Buffer { int16_t i16heap[]; };
 layout(std430, binding = 0) buffer i32Buffer { int32_t i32heap[]; };
 layout(std430, binding = 0) buffer i64Buffer { int64_t i64heap[]; };
 
+#ifdef FLOAT16
+layout(std430, binding = 0) buffer f16Buffer { float16_t f16heap[]; };
 layout(std430, binding = 0) buffer f16v2Buffer { f16vec2 f16v2heap[]; };
+layout(std430, binding = 0) buffer f16v3Buffer { f16vec3 f16v3heap[]; };
+layout(std430, binding = 0) buffer f16v4Buffer { f16vec4 f16v4heap[]; };
+layout(std430, binding = 0) buffer f16m2Buffer { f16mat2 f16m2heap[]; };
+layout(std430, binding = 0) buffer f16m3Buffer { f16mat3 f16m3heap[]; };
+layout(std430, binding = 0) buffer f16m4Buffer { f16mat4 f16m4heap[]; };
+#endif
+
 layout(std430, binding = 0) buffer f32v2Buffer { f32vec2 f32v2heap[]; };
 layout(std430, binding = 0) buffer f64v2Buffer { f64vec2 f64v2heap[]; };
 
-layout(std430, binding = 0) buffer f16v3Buffer { f16vec3 f16v3heap[]; };
 layout(std430, binding = 0) buffer f32v3Buffer { f32vec3 f32v3heap[]; };
 layout(std430, binding = 0) buffer f64v3Buffer { f64vec3 f64v3heap[]; };
 
-layout(std430, binding = 0) buffer f16v4Buffer { f16vec4 f16v4heap[]; };
 layout(std430, binding = 0) buffer f32v4Buffer { f32vec4 f32v4heap[]; };
 layout(std430, binding = 0) buffer f64v4Buffer { f64vec4 f64v4heap[]; };
 
@@ -68,15 +74,12 @@ layout(std430, binding = 0) buffer i16v4Buffer { i16vec4 i16v4heap[]; };
 layout(std430, binding = 0) buffer i32v4Buffer { i32vec4 i32v4heap[]; };
 layout(std430, binding = 0) buffer i64v4Buffer { i64vec4 i64v4heap[]; };
 
-layout(std430, binding = 0) buffer f16m2Buffer { f16mat2 f16m2heap[]; };
 layout(std430, binding = 0) buffer f32m2Buffer { f32mat2 f32m2heap[]; };
 layout(std430, binding = 0) buffer f64m2Buffer { f64mat2 f64m2heap[]; };
 
-layout(std430, binding = 0) buffer f16m3Buffer { f16mat3 f16m3heap[]; };
 layout(std430, binding = 0) buffer f32m3Buffer { f32mat3 f32m3heap[]; };
 layout(std430, binding = 0) buffer f64m3Buffer { f64mat3 f64m3heap[]; };
 
-layout(std430, binding = 0) buffer f16m4Buffer { f16mat4 f16m4heap[]; };
 layout(std430, binding = 0) buffer f32m4Buffer { f32mat4 f32m4heap[]; };
 layout(std430, binding = 0) buffer f64m4Buffer { f64mat4 f64m4heap[]; };
 

@@ -68,7 +68,7 @@ const string stdin = string(0, 0);
 const string stdout = string(1, 0);
 const string stderr = string(2, 0);
 
-int32_t errno = 0;
+int32_t ioError = 0;
 
 ptr_t fromIOStart = ThreadId * FromIOSize;
 ptr_t fromIOEnd = fromIOStart + FromIOSize;
@@ -182,7 +182,7 @@ io requestIO(ioRequest request, bool needToCopyDataToIO) {
 
     // Wait for possible previous IO to complete :<
     // This will deadlock if the IO buffer is full of requests and you're not awaiting for them.
-    while(ioRequests[reqNum].status != IO_NONE && ioRequests[reqNum].status != IO_HANDLED);
+    while(atomicAdd(ioRequests[reqNum].status, 0) != IO_NONE && atomicAdd(ioRequests[reqNum].status, 0) != IO_HANDLED);
 
     ioRequests[reqNum] = request;
     token.index = reqNum;
@@ -201,18 +201,18 @@ bool pollIO(io ioReq) {
 
 void awaitAndDiscardIO(io ioReq) {
     if ((exited != 0 || stopIO != 0)) return;
-    if (ioRequests[ioReq.index].status != IO_NONE) {
-        while (ioRequests[ioReq.index].status < IO_COMPLETE ||
-               ioRequests[ioReq.index].data.y == -1);
+    if (atomicAdd(ioRequests[ioReq.index].status, 0) != IO_NONE) {
+        while (atomicAdd(ioRequests[ioReq.index].status, 0) < IO_COMPLETE ||
+               atomicAdd(ioRequests[ioReq.index].data.y, 0) == -1);
     }
     ioRequests[ioReq.index].status = IO_HANDLED;
 }
 
 alloc_t awaitIO(io ioReq, inout int32_t status, bool noCopy, out size_t ioCount, out bool compressed) {
     if ((exited != 0 || stopIO != 0)) return alloc_t(-1,-1);
-    if (ioRequests[ioReq.index].status != IO_NONE) {
-        while (ioRequests[ioReq.index].status < IO_COMPLETE ||
-               ioRequests[ioReq.index].data.y == -1);
+    if (atomicAdd(ioRequests[ioReq.index].status, 0) != IO_NONE) {
+        while (atomicAdd(ioRequests[ioReq.index].status, 0) < IO_COMPLETE ||
+               atomicAdd(ioRequests[ioReq.index].data.y, 0) == -1);
     }
 
     ioRequest req = ioRequests[ioReq.index];
@@ -294,22 +294,22 @@ alloc_t awaitIO(io request, inout int32_t status) {
 alloc_t awaitIO(io request) {
     size_t count;
     bool compressed;
-    return awaitIO(request, errno, false, count, compressed);
+    return awaitIO(request, ioError, false, count, compressed);
 }
 
 alloc_t awaitIO(io request, bool noCopy) {
     size_t count;
     bool compressed;
-    return awaitIO(request, errno, noCopy, count, compressed);
+    return awaitIO(request, ioError, noCopy, count, compressed);
 }
 
 alloc_t awaitIO(io request, bool noCopy, out size_t count) {
     bool compressed;
-    return awaitIO(request, errno, noCopy, count, compressed);
+    return awaitIO(request, ioError, noCopy, count, compressed);
 }
 
 alloc_t awaitIO(io request, bool noCopy, out size_t count, out bool compressed) {
-    return awaitIO(request, errno, noCopy, count, compressed);
+    return awaitIO(request, ioError, noCopy, count, compressed);
 }
 
 io read(string filename, int64_t offset, size_t count, string buf) {

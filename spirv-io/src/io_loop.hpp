@@ -36,7 +36,7 @@ static void handleIORequest(ComputeApplication *app, bool verbose, ioRequests *i
         }
     } else if (req.filename_end == -2) {
     } else {
-        VkDeviceSize filenameLength = req.filename_end - req.filename_start;
+        int64_t filenameLength = req.filename_end - req.filename_start;
         if (verbose) fprintf(stderr, "Filename length %lu\n", filenameLength);
         filename = (char*)calloc(filenameLength + 1, 1);
         app->readFromGPUIO(req.filename_start, filenameLength);
@@ -356,6 +356,7 @@ static void handleIORequest(ComputeApplication *app, bool verbose, ioRequests *i
         } else {
             fseek(fd, req.offset, SEEK_SET);
         }
+        if (verbose) fprintf(stderr, "write %p / %p: %.14s\n", fromGPUBuf, fromGPUBuf + req.result_start, fromGPUBuf + req.result_start);
         int32_t bytes = fwrite(fromGPUBuf + req.result_start, 1, req.count, fd);
         if (file == NULL) closeFile(fd);
         volatileReqs[i].result_end = req.result_start + bytes;
